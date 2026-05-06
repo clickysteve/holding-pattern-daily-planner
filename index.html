@@ -615,6 +615,8 @@
   .block.short .block-meta { display: none; }
   /* Hide meta chips in 7-day view — columns are too narrow there. 3 and 5-day still show them. */
   .grid[data-day-count="7"] .block-meta { display: none; }
+  /* In multi-day view, hide meta chips on overlapping blocks (columns are already narrow). Single-day overlap keeps chips. */
+  .grid.multi .block.overlapped .block-meta { display: none; }
   .block-meta .block-tag,
   .block-meta .block-cal {
     margin-right: 0;
@@ -2639,6 +2641,7 @@ function renderGrid() {
       const height = slotPx(dur) - 2;
       const layout = layoutMap.get("e:" + ev.id) || { col: 0, totalCols: 1 };
       const colStyle = blockColInset(dayIdx, dayCount, layout.col, layout.totalCols);
+      const overlapClass = layout.totalCols > 1 ? "overlapped" : "";
       const tall = dur >= 45;
       const medium = dur >= 30 && dur < 45;
       const short = dur < 30;
@@ -2654,7 +2657,7 @@ function renderGrid() {
       const evTagChip = evTag ? `<span class="block-tag">${escapeHtml(evTag)}</span>` : "";
       const calChip = ev.calName ? `<span class="block-cal">${escapeHtml(ev.calName)}</span>` : "";
       const metaHtml = (evTagChip || calChip) ? `<div class="block-meta">${evTagChip}${calChip}</div>` : "";
-      html += `<div class="block event ${logged ? "logged" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" data-day-idx="${dayIdx}" style="top:${top}px;height:${height}px;${styleBg}${colStyle}" title="${escapeHtml(tooltip)}">
+      html += `<div class="block event ${logged ? "logged" : ""} ${overlapClass} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" data-day-idx="${dayIdx}" style="top:${top}px;height:${height}px;${styleBg}${colStyle}" title="${escapeHtml(tooltip)}">
         <div class="block-check ${logged ? "checked" : ""}" data-action="toggle-event-log" title="${logged ? "Unlog" : "Log for bi-weekly"}"></div>
         ${showTime ? `<div class="block-time" style="position:relative;z-index:1;">${escapeHtml(tStr)}</div>` : ""}
         <div class="block-title" style="position:relative;z-index:1;">${escapeHtml(ev.summary)}</div>
@@ -2670,6 +2673,7 @@ function renderGrid() {
       const height = slotPx(dur) - 2;
       const layout = layoutMap.get("t:" + tk.id) || { col: 0, totalCols: 1 };
       const colStyle = blockColInset(dayIdx, dayCount, layout.col, layout.totalCols);
+      const overlapClass = layout.totalCols > 1 ? "overlapped" : "";
       const tall = dur >= 45;
       const medium = dur >= 30 && dur < 45;
       const short = dur < 30;
@@ -2683,7 +2687,7 @@ function renderGrid() {
       const styleBg = customBg ? `background:${customBg};` : "";
       const tagChip = tk.tag ? `<span class="block-tag">${escapeHtml(tk.tag)}</span>` : "";
       const metaHtml = tagChip ? `<div class="block-meta">${tagChip}</div>` : "";
-      html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-day-idx="${dayIdx}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}${colStyle}">
+      html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${overlapClass} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-day-idx="${dayIdx}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}${colStyle}">
         <div class="block-resize" data-resize="top"></div>
         <div class="block-check" data-action="toggle-done" title="${isDone ? "Mark not done" : "Mark done"}"></div>
         ${showTime ? `<div class="block-time">${escapeHtml(tStr)}</div>` : ""}
