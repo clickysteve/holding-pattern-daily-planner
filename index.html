@@ -40,15 +40,25 @@
   }
   .wrap { max-width: 1100px; margin: 0 auto; padding: 18px 18px 64px; }
 
-  /* --- Capture bar --- */
-  .capture {
-    position: sticky;
-    top: 0;
-    background: var(--bg);
-    padding: 8px 0 14px;
-    z-index: 50;
-    margin-bottom: 14px;
+  /* --- Page header (month) --- */
+  .page-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 6px 4px 18px;
   }
+  .page-month {
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    background: var(--accent-bg);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* --- Capture bar --- */
   .capture-input-wrap {
     display: flex;
     align-items: center;
@@ -135,33 +145,47 @@
   }
   .day-tab.active .day-tab-count { background: var(--accent); color: var(--bg); }
 
-  /* --- Inbox: full-width row above the grid --- */
+  /* --- Inbox panel: contains capture bar + collapsible items list --- */
   .inbox-panel {
     background: var(--surface);
     border: 1.5px solid var(--border);
     border-radius: 14px;
-    padding: 12px 14px;
+    padding: 12px 14px 6px;
     margin-bottom: 18px;
   }
-  .inbox-head {
+  .inbox-disclosure { margin-top: 10px; }
+  .inbox-disclosure summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
     display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 10px;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 0;
   }
-  .inbox-head h3 {
-    margin: 0;
+  .inbox-disclosure summary::-webkit-details-marker { display: none; }
+  .inbox-disclosure summary::before {
+    content: "▸";
+    color: var(--text-dim);
+    transition: transform 0.15s;
+    display: inline-block;
+    font-size: 10px;
+  }
+  .inbox-disclosure[open] summary::before { transform: rotate(90deg); }
+  .inbox-summary-label {
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: var(--text-muted);
     font-weight: 700;
   }
-  .inbox-head .inbox-count {
+  .inbox-disclosure summary:hover .inbox-summary-label { color: var(--text); }
+  .inbox-count {
     font-size: 11px;
     color: var(--accent);
     font-weight: 700;
   }
+  .inbox-disclosure[open] .inbox-list { padding-top: 6px; }
   .inbox-list {
     display: flex;
     flex-direction: row;
@@ -225,7 +249,6 @@
     border: 1.5px solid var(--border);
     border-radius: 14px;
     padding: 14px;
-    overflow: hidden;
   }
   .day-head {
     display: flex;
@@ -336,7 +359,6 @@
     font-weight: 600;
     padding-right: 8px;
     line-height: 1;
-    transform: translateY(-5px);
   }
 
   /* --- Now line --- */
@@ -948,24 +970,27 @@
 </div>
 
 <div class="wrap">
-  <div class="capture">
+  <header class="page-head">
+    <div class="page-month" id="page-month"></div>
+  </header>
+
+  <section class="inbox-panel">
     <div class="capture-input-wrap">
-      <input class="capture-input" id="capture" placeholder="Throw something in… (e.g. 'draft Q3 update tomorrow 2pm 30m')" autocomplete="off" />
+      <input class="capture-input" id="capture" placeholder="throw it in… (try 'mix track tomorrow 8pm 1h #music')" autocomplete="off" />
     </div>
     <div class="capture-hint">
       Hit Enter to capture. Try <code>today</code>, <code>tomorrow</code>, <code>fri</code>, <code>2pm</code>, <code>14:00</code>, <code>30m</code>, <code>1h</code>, <code>#work</code>.
     </div>
-  </div>
+    <details class="inbox-disclosure" id="inbox-disclosure" open>
+      <summary class="inbox-summary">
+        <span class="inbox-summary-label">Inbox</span>
+        <span class="inbox-count" id="inbox-count">0</span>
+      </summary>
+      <div class="inbox-list" id="inbox-list"></div>
+    </details>
+  </section>
 
   <div class="day-tabs" id="day-tabs"></div>
-
-  <section class="inbox-panel">
-    <div class="inbox-head">
-      <h3>Inbox</h3>
-      <span class="inbox-count" id="inbox-count">0</span>
-    </div>
-    <div class="inbox-list" id="inbox-list"></div>
-  </section>
 
   <main class="day-panel">
     <div class="day-head">
@@ -1721,6 +1746,14 @@ function tasksForDay(date) {
 }
 
 // ---------- Render: day tabs ----------
+function renderPageMonth() {
+  const el = document.getElementById("page-month");
+  if (!el) return;
+  const offset = state.activeDayOffset || 0;
+  const d = addDays(startOfDay(), offset);
+  el.textContent = d.toLocaleDateString([], { month: "long", year: "numeric" });
+}
+
 function renderDayTabs() {
   const el = document.getElementById("day-tabs");
   const today = startOfDay();
@@ -1861,7 +1894,10 @@ function renderGrid() {
   const labelsEl = document.getElementById("hour-labels");
   labelsEl.style.height = gridHeight + "px";
   let labelHtml = "";
-  for (let h = bounds.startHour; h <= bounds.endHour; h++) {
+  // Render labels for each hour from startHour through endHour-1.
+  // Skipping the endHour label avoids the bottom clipping (it sits exactly at
+  // the grid edge and would render half-cut).
+  for (let h = bounds.startHour; h < bounds.endHour; h++) {
     const top = (h - bounds.startHour) * 4 * SLOT_HEIGHT;
     labelHtml += `<div class="hour-label" style="top:${top}px;">${String(h).padStart(2,"0")}:00</div>`;
   }
@@ -2889,6 +2925,7 @@ document.getElementById("copy-done").addEventListener("click", async () => {
 
 // ---------- Boot ----------
 function renderAll() {
+  renderPageMonth();
   renderDayTabs();
   renderInbox();
   renderGrid();
@@ -3113,6 +3150,15 @@ document.getElementById("restore-input").addEventListener("change", async (e) =>
 async function boot() {
   if (!window.cowork || typeof window.cowork.callMcpTool !== "function") {
     setTimeout(boot, 100); return;
+  }
+  // Inbox disclosure: restore + persist
+  const inboxDisc = document.getElementById("inbox-disclosure");
+  if (inboxDisc) {
+    const stored = localStorage.getItem("planner:inbox-open");
+    if (stored !== null) inboxDisc.open = stored === "1";
+    inboxDisc.addEventListener("toggle", () => {
+      localStorage.setItem("planner:inbox-open", inboxDisc.open ? "1" : "0");
+    });
   }
   // Show "Sign out" button only when running standalone (OAuth mode)
   if (typeof window.__signOutOAuth === "function") {
