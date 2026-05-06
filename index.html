@@ -139,7 +139,16 @@
     border-color: var(--accent-strong);
   }
   .day-tab .day-tab-day { font-size: 18px; font-weight: 700; line-height: 1; }
-  .day-tab .day-tab-name { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.8; }
+  .day-tab .day-tab-name { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.85; }
+  .day-tab .day-tab-sub {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    font-weight: 600;
+    margin-top: -1px;
+  }
+  .day-tab.active .day-tab-sub { color: var(--accent); opacity: 0.85; }
   .day-tab .day-tab-count {
     font-size: 9px;
     background: var(--accent-strong);
@@ -218,6 +227,7 @@
     user-select: none;
     position: relative;
     max-width: 280px;
+    touch-action: none; /* allow drag without browser fighting for scroll */
   }
   .inbox-task:hover {
     border-color: var(--accent);
@@ -406,6 +416,7 @@
     box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     user-select: none;
     line-height: 1.25;
+    touch-action: none; /* prevent the browser from interpreting drag as scroll */
   }
   .block:hover {
     transform: translateY(-1px);
@@ -433,6 +444,7 @@
     z-index: 3;
     border-radius: 2px;
     transition: background 0.1s;
+    touch-action: none;
   }
   .block-resize.top { top: 0; left: 8px; right: 30px; } /* leave room for checkbox */
   .block-resize.bottom { bottom: 0; left: 8px; right: 8px; }
@@ -539,6 +551,26 @@
     box-shadow: 0 0 0 4px rgba(34,211,238,0.12);
   }
   .block.ghost .block-title { font-style: italic; opacity: 0.95; }
+
+  /* Meta chips at bottom-right of blocks (calendar name, tag) */
+  .block-meta {
+    position: absolute;
+    bottom: 3px;
+    right: 26px;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    z-index: 2;
+    pointer-events: none;
+    max-width: 65%;
+    overflow: hidden;
+  }
+  .block.short .block-meta { display: none; }
+  .block-meta .block-tag,
+  .block-meta .block-cal {
+    margin-right: 0;
+    line-height: 1.4;
+  }
 
   /* Tag chip on blocks */
   .block-tag {
@@ -893,6 +925,50 @@
     cursor: pointer;
   }
   .data-footer button:hover { color: var(--accent); border-color: var(--accent); }
+  .data-footer { flex-wrap: wrap; row-gap: 8px; }
+
+  /* --- Touch-only adjustments --- */
+  @media (hover: none) and (pointer: coarse) {
+    /* Bigger resize handles for fingers */
+    .block-resize { height: 14px; }
+    .block:hover .block-resize { background: rgba(255,255,255,0.2); }
+    /* Show inbox actions always (no hover) */
+    .inbox-task .it-actions { opacity: 1; }
+    /* Bigger duration buttons */
+    .pop-row .dur-pick button { padding: 10px 4px; font-size: 13px; }
+    /* Bigger tag swatches */
+    .tag-swatch { padding: 6px 12px; font-size: 12px; }
+  }
+
+  /* --- Narrow viewport (phones) --- */
+  @media (max-width: 600px) {
+    .wrap { padding: 14px 10px 80px; }
+    .page-head { flex-direction: column; align-items: flex-start; gap: 4px; padding-bottom: 12px; }
+    .page-month { font-size: 22px; }
+    .day-tab { min-width: 56px; padding: 6px 10px; }
+    .day-tab .day-tab-day { font-size: 16px; }
+    .day-panel { padding: 10px; }
+    .inbox-panel { padding: 10px; }
+    .inbox-task { max-width: 100%; flex: 1; }
+    .all-day-strip { margin-left: 50px; }
+    .grid { margin-left: 50px; }
+    .hour-labels { width: 50px; }
+    .hour-label { width: 44px; padding-right: 6px; font-size: 10px; }
+    .day-head h2 { font-size: 16px; }
+    .data-footer { flex-direction: column; align-items: stretch; }
+    .data-footer .data-actions { justify-content: flex-end; }
+    /* Popover: full-width-ish, centered */
+    .popover {
+      left: 12px !important;
+      right: 12px !important;
+      width: auto !important;
+      min-width: 0 !important;
+      max-width: calc(100vw - 24px) !important;
+      max-height: calc(100vh - 24px);
+      overflow-y: auto;
+    }
+    .cal-picker-popover { min-width: 0 !important; }
+  }
 
   #sync-status[data-kind="ok"] { color: var(--done); }
   #sync-status[data-kind="syncing"] { color: var(--accent); }
@@ -1548,7 +1624,7 @@ const CAL_COLOR_NAMES = [
   "brown","bronze","slate","gray","dark gray"
 ];
 const DEFAULT_DAY_START_HOUR = 7;
-const DEFAULT_DAY_END_HOUR = 22;
+const DEFAULT_DAY_END_HOUR = 28; // 4am next day — for night-owl scheduling
 
 // Tags reuse the 24-color CAL_COLORS palette so tasks and calendars share the same range.
 function loadTags() { try { return JSON.parse(localStorage.getItem(TAGS_KEY) || "{}"); } catch { return {}; } }
@@ -1996,9 +2072,12 @@ function renderDayTabs() {
     const d = addDays(today, i);
     const dayTasks = tasksForDay(d).filter(t => t.status !== "done");
     const isActive = i === state.activeDayOffset;
+    const isSpecial = i === 0 || i === 1;
     const dayLabel = i === 0 ? "Today" : i === 1 ? "Tomorrow" : d.toLocaleDateString([], { weekday: "short" });
+    const dayShort = isSpecial ? d.toLocaleDateString([], { weekday: "short" }) : "";
     tabs.push(`<button class="day-tab ${isActive ? "active" : ""}" data-offset="${i}">
       <span class="day-tab-name">${escapeHtml(dayLabel)}</span>
+      ${dayShort ? `<span class="day-tab-sub">${escapeHtml(dayShort)}</span>` : ""}
       <span class="day-tab-day">${d.getDate()}</span>
       ${dayTasks.length ? `<span class="day-tab-count">${dayTasks.length}</span>` : ""}
     </button>`);
@@ -2027,7 +2106,7 @@ function renderInbox() {
   el.innerHTML = tasks.map(t => {
     const borderColor = tagSolid(t.tag) || "var(--accent-strong)";
     const tagChip = t.tag ? `<span class="block-tag" style="background:${tagSolid(t.tag)};color:#0a0a0c;">${escapeHtml(t.tag)}</span>` : "";
-    return `<div class="inbox-task" draggable="true" data-id="${t.id}" style="border-left-color:${borderColor};">
+    return `<div class="inbox-task" data-id="${t.id}" style="border-left-color:${borderColor};">
       <div>${tagChip}${escapeHtml(t.text)}</div>
       ${t.estimatedMinutes ? `<div style="margin-top:3px;font-size:10px;color:var(--text-dim);font-weight:500;">${t.estimatedMinutes}m</div>` : ""}
       <div class="it-actions">
@@ -2035,27 +2114,23 @@ function renderInbox() {
       </div>
     </div>`;
   }).join("");
-  // Wire handlers
+  // Wire handlers — pointer events so touch works too
   el.querySelectorAll(".inbox-task").forEach(item => {
     const id = item.dataset.id;
-    item.addEventListener("dragstart", (e) => {
-      item.classList.add("dragging");
-      e.dataTransfer.setData("text/plain", id);
-      e.dataTransfer.effectAllowed = "move";
-      // Track the task being dragged so the grid can paint a snap preview
-      const t = loadStore().find(x => x.id === id);
-      window.__inboxDragTask = t || null;
-    });
-    item.addEventListener("dragend", () => {
-      item.classList.remove("dragging");
-      window.__inboxDragTask = null;
-      removeGhost();
-      const gridEl = document.getElementById("grid");
-      if (gridEl) gridEl.classList.remove("drop-over");
+    item.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      if (e.target.closest("[data-action='del']")) return;
+      pendingInboxDrag = {
+        item, id,
+        startX: e.clientX, startY: e.clientY,
+        moved: false,
+        pointerId: e.pointerId,
+      };
     });
     item.addEventListener("click", (e) => {
+      if (inboxSuppressClick) return;
       if (e.target.dataset.action === "del") return;
-      // Schedule for the active day at a default time
+      // Quick-schedule for the active day's default time
       scheduleTaskQuick(id);
     });
     item.querySelector("[data-action='del']").addEventListener("click", (e) => {
@@ -2066,6 +2141,96 @@ function renderInbox() {
     });
   });
 }
+
+// Pointer-based inbox-to-grid drag (works for mouse + touch)
+let pendingInboxDrag = null;
+let inboxSuppressClick = false;
+
+function onInboxPointerMove(e) {
+  if (!pendingInboxDrag) return;
+  const dx = e.clientX - pendingInboxDrag.startX;
+  const dy = e.clientY - pendingInboxDrag.startY;
+  if (!pendingInboxDrag.moved) {
+    if (Math.abs(dx) + Math.abs(dy) < 8) return; // movement threshold
+    pendingInboxDrag.moved = true;
+    const t = loadStore().find(x => x.id === pendingInboxDrag.id);
+    if (!t) { pendingInboxDrag = null; return; }
+    window.__inboxDragTask = t;
+    pendingInboxDrag.item.classList.add("dragging");
+    document.body.style.userSelect = "none";
+    try { pendingInboxDrag.item.setPointerCapture(e.pointerId); } catch {}
+  }
+  if (e.cancelable) e.preventDefault();
+
+  const gridEl = document.getElementById("grid");
+  if (!gridEl) return;
+  const gridRect = gridEl.getBoundingClientRect();
+  const overGrid = e.clientX >= gridRect.left && e.clientX <= gridRect.right
+                && e.clientY >= gridRect.top && e.clientY <= gridRect.bottom;
+  if (overGrid) {
+    gridEl.classList.add("drop-over");
+    const ctx = gridEl._dayCtx;
+    const dragTask = window.__inboxDragTask;
+    if (ctx && dragTask) {
+      const y = e.clientY - gridRect.top;
+      const rawMins = ctx.startHour * 60 + (y / SLOT_HEIGHT) * 15;
+      const dropMins = Math.max(0, Math.round(rawMins / 30) * 30);
+      const dropTime = new Date(ctx.day);
+      dropTime.setHours(0, 0, 0, 0);
+      dropTime.setMinutes(dropMins);
+      paintGhost(dropTime, dragTask.estimatedMinutes || 30, false);
+    }
+  } else {
+    gridEl.classList.remove("drop-over");
+    removeGhost();
+  }
+}
+
+function onInboxPointerUp(e) {
+  if (!pendingInboxDrag) return;
+  const p = pendingInboxDrag;
+  pendingInboxDrag = null;
+  if (!p.moved) return; // tap → click handler will run
+
+  p.item.classList.remove("dragging");
+  document.body.style.userSelect = "";
+  inboxSuppressClick = true;
+  setTimeout(() => inboxSuppressClick = false, 150);
+  const gridEl = document.getElementById("grid");
+  if (gridEl) gridEl.classList.remove("drop-over");
+  removeGhost();
+
+  // Determine if pointer is over the grid → schedule
+  if (gridEl) {
+    const gridRect = gridEl.getBoundingClientRect();
+    const overGrid = e.clientX >= gridRect.left && e.clientX <= gridRect.right
+                  && e.clientY >= gridRect.top && e.clientY <= gridRect.bottom;
+    if (overGrid) {
+      const ctx = gridEl._dayCtx;
+      if (ctx) {
+        const y = e.clientY - gridRect.top;
+        const rawMins = ctx.startHour * 60 + (y / SLOT_HEIGHT) * 15;
+        const dropMins = Math.max(0, Math.round(rawMins / 30) * 30);
+        const dropTime = new Date(ctx.day);
+        dropTime.setHours(0, 0, 0, 0);
+        dropTime.setMinutes(dropMins);
+        const arr = loadStore();
+        const t = arr.find(x => x.id === p.id);
+        if (t) {
+          t.scheduledFor = dropTime.toISOString();
+          t.status = "scheduled";
+          saveStore(arr);
+          renderAll();
+        }
+      }
+    }
+  }
+  window.__inboxDragTask = null;
+}
+
+document.addEventListener("pointermove", onInboxPointerMove, { passive: false });
+document.addEventListener("pointerup", onInboxPointerUp);
+document.addEventListener("pointercancel", onInboxPointerUp);
 
 function scheduleTaskQuick(id) {
   const arr = loadStore();
@@ -2100,7 +2265,7 @@ function getDayBounds(date) {
     startHour = Math.min(startHour, s.getHours());
     endHour = Math.max(endHour, Math.ceil(eMins / 60));
   }
-  return { startHour: Math.max(0, startHour), endHour: Math.min(24, endHour + 1) };
+  return { startHour: Math.max(0, startHour), endHour: Math.min(28, endHour + 1) };
 }
 
 function renderGrid() {
@@ -2142,7 +2307,8 @@ function renderGrid() {
   // the grid edge and would render half-cut).
   for (let h = bounds.startHour; h < bounds.endHour; h++) {
     const top = (h - bounds.startHour) * 4 * SLOT_HEIGHT;
-    labelHtml += `<div class="hour-label" style="top:${top}px;">${String(h).padStart(2,"0")}:00</div>`;
+    const displayH = ((h % 24) + 24) % 24;
+    labelHtml += `<div class="hour-label" style="top:${top}px;">${String(displayH).padStart(2,"0")}:00</div>`;
   }
   labelsEl.innerHTML = labelHtml;
 
@@ -2154,7 +2320,11 @@ function renderGrid() {
 
   const minsFromStart = (iso) => {
     const d = new Date(iso);
-    return (d.getHours() * 60 + d.getMinutes()) - bounds.startHour * 60;
+    const isoDayMs = startOfDay(d).getTime();
+    const viewDayMs = startOfDay(day).getTime();
+    const dayDiff = Math.round((isoDayMs - viewDayMs) / 86400000);
+    const mins = d.getHours() * 60 + d.getMinutes() + dayDiff * 24 * 60;
+    return mins - bounds.startHour * 60;
   };
   const slotPx = (mins) => Math.max(0, mins / 15) * SLOT_HEIGHT;
 
@@ -2191,10 +2361,12 @@ function renderGrid() {
     const logged = isEventLogged(ev.id);
     const evTagChip = evTag ? `<span class="block-tag">${escapeHtml(evTag)}</span>` : "";
     const calChip = ev.calName ? `<span class="block-cal">${escapeHtml(ev.calName)}</span>` : "";
+    const metaHtml = (evTagChip || calChip) ? `<div class="block-meta">${evTagChip}${calChip}</div>` : "";
     html += `<div class="block event ${logged ? "logged" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" style="top:${top}px;height:${height}px;${styleBg}" title="${escapeHtml(tooltip)}">
       <div class="block-check ${logged ? "checked" : ""}" data-action="toggle-event-log" title="${logged ? "Unlog" : "Log for bi-weekly"}"></div>
       ${showTime ? `<div class="block-time" style="position:relative;z-index:1;">${escapeHtml(tStr)}</div>` : ""}
-      <div class="block-title" style="position:relative;z-index:1;">${evTagChip}${calChip}${escapeHtml(ev.summary)}</div>
+      <div class="block-title" style="position:relative;z-index:1;">${escapeHtml(ev.summary)}</div>
+      ${metaHtml}
     </div>`;
   }
 
@@ -2218,11 +2390,13 @@ function renderGrid() {
     const customBg = tagBg(tk.tag);
     const styleBg = customBg ? `background:${customBg};` : "";
     const tagChip = tk.tag ? `<span class="block-tag">${escapeHtml(tk.tag)}</span>` : "";
+    const metaHtml = tagChip ? `<div class="block-meta">${tagChip}</div>` : "";
     html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}">
       <div class="block-resize" data-resize="top"></div>
       <div class="block-check" data-action="toggle-done" title="${isDone ? "Mark not done" : "Mark done"}"></div>
       ${showTime ? `<div class="block-time">${escapeHtml(tStr)}</div>` : ""}
-      <div class="block-title">${tagChip}${escapeHtml(tk.text)}</div>
+      <div class="block-title">${escapeHtml(tk.text)}</div>
+      ${metaHtml}
       <div class="block-resize" data-resize="bottom"></div>
     </div>`;
   }
@@ -2267,8 +2441,8 @@ function renderGrid() {
       if (e.target.closest("[data-resize]")) return; // resize handles handle their own
       openTaskPopover(b, b.dataset.id);
     });
-    b.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
+    b.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
       if (e.target.closest("[data-action='toggle-done']")) return;
       let kind = "move";
       if (e.target.closest("[data-resize='top']")) kind = "resize-top";
@@ -2319,7 +2493,13 @@ function onBlockMouseMove(e) {
     pendingDrag.block.classList.add("dragging");
     document.body.style.userSelect = "none";
     document.body.style.cursor = pendingDrag.kind === "move" ? "grabbing" : "ns-resize";
+    // Capture pointer to keep receiving events even if the pointer leaves the block
+    if (e.pointerId != null) {
+      try { pendingDrag.block.setPointerCapture(e.pointerId); } catch {}
+    }
   }
+  // Once a real drag has started, prevent touch from scrolling the page
+  if (pendingDrag.moved && e.cancelable) e.preventDefault();
   // Snap delta to 15 min (= 1 slot = 16px) when moving/resizing existing blocks
   const snapPx = SLOT_HEIGHT;
   const snappedDy = Math.round(dy / snapPx) * snapPx;
@@ -2396,8 +2576,9 @@ function onBlockMouseUp(e) {
   renderAll();
 }
 
-document.addEventListener("mousemove", onBlockMouseMove);
-document.addEventListener("mouseup", onBlockMouseUp);
+document.addEventListener("pointermove", onBlockMouseMove, { passive: false });
+document.addEventListener("pointerup", onBlockMouseUp);
+document.addEventListener("pointercancel", onBlockMouseUp);
 
 // Global keyboard shortcuts
 document.addEventListener("keydown", (e) => {
@@ -2419,54 +2600,7 @@ document.addEventListener("keydown", (e) => {
 // ---------- Grid-level listeners (attached once) ----------
 function wireGridListeners() {
   const gridEl = document.getElementById("grid");
-  gridEl.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    gridEl.classList.add("drop-over");
-    // Live preview ghost while dragging from the inbox
-    const ctx = gridEl._dayCtx;
-    const dragTask = window.__inboxDragTask;
-    if (!ctx || !dragTask) return;
-    const rect = gridEl.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const rawMins = ctx.startHour * 60 + (y / SLOT_HEIGHT) * 15;
-    const dropMins = Math.max(0, Math.round(rawMins / 30) * 30);
-    const dropTime = new Date(ctx.day);
-    dropTime.setHours(0, 0, 0, 0);
-    dropTime.setMinutes(dropMins);
-    paintGhost(dropTime, dragTask.estimatedMinutes || 30, false);
-  });
-  gridEl.addEventListener("dragleave", (e) => {
-    if (e.target === gridEl) {
-      gridEl.classList.remove("drop-over");
-      removeGhost();
-    }
-  });
-  gridEl.addEventListener("drop", (e) => {
-    e.preventDefault();
-    gridEl.classList.remove("drop-over");
-    removeGhost();
-    window.__inboxDragTask = null;
-    const id = e.dataTransfer.getData("text/plain");
-    if (!id) return;
-    const ctx = gridEl._dayCtx;
-    if (!ctx) return;
-    const rect = gridEl.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    // Drop snaps to nearest 30 min (slots are 15-min, so round to even index × 15)
-    const rawMins = ctx.startHour * 60 + (y / SLOT_HEIGHT) * 15;
-    const dropMins = Math.max(0, Math.round(rawMins / 30) * 30);
-    const dropTime = new Date(ctx.day);
-    dropTime.setHours(0, 0, 0, 0);
-    dropTime.setMinutes(dropMins);
-    const arr = loadStore();
-    const t = arr.find(x => x.id === id);
-    if (!t) return;
-    t.scheduledFor = dropTime.toISOString();
-    t.status = "scheduled";
-    saveStore(arr);
-    renderAll();
-  });
+  // (Inbox-to-grid drag is handled at document level via pointer events — see onInboxPointerMove/Up)
   gridEl.addEventListener("click", (e) => {
     if (e.target !== gridEl) return;
     const ctx = gridEl._dayCtx;
@@ -2488,7 +2622,7 @@ let popoverOnClose = null;
 function closePopover() {
   if (popoverOnClose) { try { popoverOnClose(); } catch {} popoverOnClose = null; }
   if (activePopover) { activePopover.remove(); activePopover = null; }
-  document.removeEventListener("mousedown", onDocClick);
+  document.removeEventListener("pointerdown", onDocClick);
 }
 function onDocClick(e) {
   if (activePopover && !activePopover.contains(e.target)) closePopover();
@@ -2605,10 +2739,10 @@ function showTagColorPicker(anchorBtn, tagName, onChange) {
     const dismiss = (ev) => {
       if (!wrap.contains(ev.target)) {
         wrap.remove();
-        document.removeEventListener("mousedown", dismiss);
+        document.removeEventListener("pointerdown", dismiss);
       }
     };
-    document.addEventListener("mousedown", dismiss);
+    document.addEventListener("pointerdown", dismiss);
   }, 0);
 }
 
@@ -2626,7 +2760,7 @@ function showPopover(html, anchorX, anchorY) {
   pop.style.left = (x + window.scrollX) + "px";
   pop.style.top = (y + window.scrollY) + "px";
   activePopover = pop;
-  setTimeout(() => document.addEventListener("mousedown", onDocClick), 0);
+  setTimeout(() => document.addEventListener("pointerdown", onDocClick), 0);
   return pop;
 }
 
