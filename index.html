@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planner</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Holding Pattern // Daily Planner</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
 <style>
   :root {
     color-scheme: dark;
@@ -831,6 +834,90 @@
     cursor: pointer;
   }
   .data-footer button:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* Auth overlay (only visible in standalone/OAuth mode) */
+  #auth-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10,10,12,0.94);
+    backdrop-filter: blur(6px);
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  #auth-overlay.show { display: flex; }
+  .auth-card {
+    background: var(--surface);
+    border: 1.5px solid var(--border-strong);
+    border-radius: 16px;
+    padding: 36px 36px 28px;
+    max-width: 420px;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .auth-card h1 {
+    margin: 0 0 4px;
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: var(--accent-bg);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .auth-card .auth-tagline {
+    margin: 0 0 18px;
+    color: var(--text-muted);
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+  .auth-card .auth-desc {
+    margin: 0 0 22px;
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .auth-card .auth-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: white;
+    color: #1f1f1f;
+    border: none;
+    border-radius: 10px;
+    padding: 11px 22px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s;
+  }
+  .auth-card .auth-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(255,255,255,0.15); }
+  .auth-card .auth-btn:disabled { opacity: 0.5; cursor: wait; }
+  .auth-card .auth-btn svg { width: 18px; height: 18px; }
+  .auth-card .auth-status {
+    margin-top: 14px;
+    color: var(--text-muted);
+    font-size: 12px;
+    min-height: 16px;
+  }
+  .auth-card .auth-status.err { color: #ff9b8a; }
+  .auth-card .auth-config-warn {
+    margin-top: 16px;
+    padding: 10px 12px;
+    background: #2a1814;
+    border: 1px solid #4a2820;
+    border-radius: 8px;
+    color: #ff9b8a;
+    font-size: 11px;
+    line-height: 1.5;
+    text-align: left;
+  }
+  .auth-card .auth-config-warn code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; }
   .skel {
     height: 14px;
     background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
@@ -843,6 +930,23 @@
 </style>
 </head>
 <body>
+<div id="auth-overlay">
+  <div class="auth-card">
+    <h1>Holding Pattern</h1>
+    <div class="auth-tagline">Daily Planner</div>
+    <div class="auth-desc">Sign in with your Google account to access your calendar. Nothing leaves your browser — auth flows directly between you and Google.</div>
+    <button class="auth-btn" id="auth-btn">
+      <svg viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
+      Sign in with Google
+    </button>
+    <div class="auth-status" id="auth-status"></div>
+    <div class="auth-config-warn" id="auth-config-warn" style="display:none;">
+      ⚠️ <strong>OAuth client ID not configured.</strong><br>
+      Open <code>index.html</code> and replace <code>YOUR_CLIENT_ID</code> with your real Google OAuth client ID. See README for setup.
+    </div>
+  </div>
+</div>
+
 <div class="wrap">
   <div class="capture">
     <div class="capture-input-wrap">
@@ -901,9 +1005,258 @@
       <button id="backup-btn">Backup</button>
       <input type="file" id="restore-input" accept=".json" style="display:none;" />
       <button id="restore-btn">Restore</button>
+      <button id="signout-btn" style="display:none;">Sign out</button>
     </div>
   </div>
 </div>
+
+<script id="oauth-bootstrap">
+// ────────────────────────────────────────────────────────────────────
+// OAuth bootstrap — runs only when the page is loaded standalone
+// (e.g. from GitHub Pages). When loaded inside Cowork, window.cowork
+// is already set, and this whole block becomes a no-op.
+// ────────────────────────────────────────────────────────────────────
+(function () {
+  const GOOGLE_CLIENT_ID = "482368295724-p0njqusav03ff2jrcv9an3cank8jdqmq.apps.googleusercontent.com";
+  const SCOPE = "https://www.googleapis.com/auth/calendar";
+  const DISCOVERY = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
+  const TOKEN_KEY = "planner:gtoken:v1";
+
+  // Cowork may inject window.cowork asynchronously. Wait briefly before deciding
+  // we're in standalone (OAuth) mode.
+  let detectAttempts = 0;
+  const detectMaxAttempts = 10; // 10 × 50ms = 500ms grace
+  function detectMode() {
+    if (window.cowork && typeof window.cowork.callMcpTool === "function") {
+      // Cowork mode — nothing to do, exit
+      return;
+    }
+    if (detectAttempts++ < detectMaxAttempts) {
+      setTimeout(detectMode, 50);
+      return;
+    }
+    // Standalone — proceed with OAuth bootstrap
+    runStandaloneBootstrap();
+  }
+  detectMode();
+
+  function runStandaloneBootstrap() {
+    const overlay = document.getElementById("auth-overlay");
+    const btn = document.getElementById("auth-btn");
+    const status = document.getElementById("auth-status");
+    const configWarn = document.getElementById("auth-config-warn");
+    overlay.classList.add("show");
+
+    if (GOOGLE_CLIENT_ID.startsWith("YOUR_CLIENT_ID")) {
+      btn.disabled = true;
+      configWarn.style.display = "block";
+      return;
+    }
+
+  function setStatus(msg, isErr) {
+    status.textContent = msg || "";
+    status.classList.toggle("err", !!isErr);
+  }
+  function loadStoredToken() {
+    try {
+      const t = JSON.parse(localStorage.getItem(TOKEN_KEY) || "null");
+      if (t && t.expiresAt > Date.now() + 30 * 1000) return t;
+    } catch {}
+    return null;
+  }
+  function saveStoredToken(token, expiresIn) {
+    localStorage.setItem(TOKEN_KEY, JSON.stringify({
+      accessToken: token,
+      expiresAt: Date.now() + (expiresIn - 60) * 1000,
+    }));
+  }
+  function clearStoredToken() { try { localStorage.removeItem(TOKEN_KEY); } catch {} }
+
+  function waitFor(check, timeout = 8000) {
+    return new Promise((resolve, reject) => {
+      const start = Date.now();
+      const tick = () => {
+        if (check()) return resolve();
+        if (Date.now() - start > timeout) return reject(new Error("timeout waiting for Google scripts"));
+        setTimeout(tick, 50);
+      };
+      tick();
+    });
+  }
+
+  async function initGapi() {
+    await waitFor(() => typeof gapi !== "undefined");
+    await new Promise((res) => gapi.load("client", res));
+    await gapi.client.init({ discoveryDocs: [DISCOVERY] });
+  }
+  async function initGis() {
+    await waitFor(() => window.google && google.accounts && google.accounts.oauth2);
+  }
+
+  let tokenClient;
+  function makeTokenClient(onSuccess, onError) {
+    return google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: SCOPE,
+      callback: (resp) => {
+        if (resp && resp.access_token) {
+          saveStoredToken(resp.access_token, resp.expires_in || 3600);
+          gapi.client.setToken({ access_token: resp.access_token });
+          onSuccess();
+        } else {
+          onError(resp && resp.error ? resp.error : "no token returned");
+        }
+      },
+      error_callback: (err) => onError(err && err.message || "auth error"),
+    });
+  }
+
+  function installAdapter() {
+    window.cowork = {
+      callMcpTool: callMcpToolViaGapi,
+      askClaude: async () => null,
+    };
+  }
+
+  async function callMcpToolViaGapi(name, params) {
+    params = params || {};
+    const last = name.split("__").pop();
+    const exec = async () => {
+      if (last === "list_calendars") {
+        const r = await gapi.client.calendar.calendarList.list({ maxResults: params.pageSize || 100 });
+        return { calendars: (r.result.items || []).map(c => ({
+          id: c.id, summary: c.summary || c.summaryOverride || c.id, timeZone: c.timeZone,
+          backgroundColor: c.backgroundColor, foregroundColor: c.foregroundColor,
+        })) };
+      }
+      if (last === "list_events") {
+        const r = await gapi.client.calendar.events.list({
+          calendarId: params.calendarId || "primary",
+          timeMin: params.startTime,
+          timeMax: params.endTime,
+          orderBy: "startTime",
+          singleEvents: true,
+          maxResults: params.pageSize || 250,
+        });
+        return { events: r.result.items || [] };
+      }
+      if (last === "create_event") {
+        const insertParams = {
+          calendarId: params.calendarId || "primary",
+          resource: {
+            summary: params.summary,
+            start: { dateTime: params.startTime },
+            end: { dateTime: params.endTime },
+          },
+        };
+        if (params.description) insertParams.resource.description = params.description;
+        if (params.location) insertParams.resource.location = params.location;
+        if (params.addGoogleMeetUrl) {
+          insertParams.resource.conferenceData = {
+            createRequest: { requestId: Math.random().toString(36).slice(2) },
+          };
+          insertParams.conferenceDataVersion = 1;
+        }
+        const r = await gapi.client.calendar.events.insert(insertParams);
+        return r.result;
+      }
+      if (last === "update_event") {
+        const resource = {};
+        if (params.summary != null) resource.summary = params.summary;
+        if (params.startTime) resource.start = { dateTime: params.startTime };
+        if (params.endTime) resource.end = { dateTime: params.endTime };
+        if (params.description != null) resource.description = params.description;
+        const r = await gapi.client.calendar.events.patch({
+          calendarId: params.calendarId || "primary",
+          eventId: params.eventId,
+          resource,
+        });
+        return r.result;
+      }
+      if (last === "delete_event") {
+        await gapi.client.calendar.events.delete({
+          calendarId: params.calendarId || "primary",
+          eventId: params.eventId,
+        });
+        return { ok: true };
+      }
+      throw new Error("Unknown tool: " + name);
+    };
+    try {
+      return await exec();
+    } catch (e) {
+      // Token expired? Re-auth silently and retry once.
+      const code = e && (e.status || (e.result && e.result.error && e.result.error.code));
+      if (code === 401) {
+        clearStoredToken();
+        await new Promise((res, rej) => {
+          tokenClient.callback = (resp) => {
+            if (resp && resp.access_token) {
+              saveStoredToken(resp.access_token, resp.expires_in || 3600);
+              gapi.client.setToken({ access_token: resp.access_token });
+              res();
+            } else rej(new Error("re-auth failed"));
+          };
+          tokenClient.requestAccessToken({ prompt: "" });
+        });
+        return await exec();
+      }
+      throw e;
+    }
+  }
+
+  async function start() {
+    setStatus("Loading Google libraries…");
+    try {
+      await Promise.all([initGapi(), initGis()]);
+    } catch (e) {
+      setStatus("Couldn't load Google scripts: " + e.message, true);
+      return;
+    }
+
+    tokenClient = makeTokenClient(
+      () => {
+        installAdapter();
+        overlay.classList.remove("show");
+      },
+      (err) => setStatus("Sign-in failed: " + err, true),
+    );
+
+    // Try silent re-auth using stored token
+    const stored = loadStoredToken();
+    if (stored) {
+      gapi.client.setToken({ access_token: stored.accessToken });
+      installAdapter();
+      overlay.classList.remove("show");
+      return;
+    }
+
+    setStatus("");
+    btn.addEventListener("click", () => {
+      setStatus("Opening Google sign-in…");
+      tokenClient.requestAccessToken({ prompt: "consent" });
+    });
+
+    // Auto-attempt silent sign-in (works if user is signed into Google in the browser)
+    setTimeout(() => {
+      try { tokenClient.requestAccessToken({ prompt: "" }); } catch {}
+    }, 200);
+  }
+
+  // Sign-out helper exposed globally for the footer button
+  window.__signOutOAuth = function () {
+    clearStoredToken();
+    if (typeof gapi !== "undefined" && gapi.client) gapi.client.setToken(null);
+    if (window.google && google.accounts && google.accounts.oauth2 && window.cowork && window.cowork.__token) {
+      google.accounts.oauth2.revoke(window.cowork.__token, () => {});
+    }
+    location.reload();
+  };
+
+  start();
+  } // end runStandaloneBootstrap
+})();
+</script>
 
 <script>
 "use strict";
@@ -2760,6 +3113,14 @@ document.getElementById("restore-input").addEventListener("change", async (e) =>
 async function boot() {
   if (!window.cowork || typeof window.cowork.callMcpTool !== "function") {
     setTimeout(boot, 100); return;
+  }
+  // Show "Sign out" button only when running standalone (OAuth mode)
+  if (typeof window.__signOutOAuth === "function") {
+    const so = document.getElementById("signout-btn");
+    if (so) {
+      so.style.display = "";
+      so.addEventListener("click", () => window.__signOutOAuth());
+    }
   }
   wireGridListeners();
 
