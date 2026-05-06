@@ -2,12 +2,14 @@
 
 A single-file HTML time-blocking planner with Google Calendar integration.
 
-Repo: [`clickysteve/holding-pattern-daily-planner`](https://github.com/clickysteve/holding-pattern-daily-planner)
+**Live:** [planner.clickysteve.com](https://planner.clickysteve.com)
+**Repo:** [`clickysteve/holding-pattern-daily-planner`](https://github.com/clickysteve/holding-pattern-daily-planner)
 
 ## Setup
 
-OAuth client is registered in Google Cloud Console with these authorized JavaScript origins:
+OAuth client is registered in Google Cloud Console. Authorized JavaScript origins:
 
+- `https://planner.clickysteve.com`
 - `https://clickysteve.github.io`
 - `http://localhost:8000`
 
@@ -24,12 +26,10 @@ Open `http://localhost:8000`.
 ## Deploy
 
 ```
-git push -u origin main
+git push
 ```
 
-Then on the repo page → Settings → Pages → Source: Deploy from a branch → `main` / root.
-
-Live at `https://clickysteve.github.io/holding-pattern-daily-planner/`.
+Live at `https://planner.clickysteve.com` ~30 seconds later (GitHub Pages rebuild).
 
 ## State
 

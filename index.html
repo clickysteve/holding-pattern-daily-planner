@@ -57,6 +57,12 @@
     background-clip: text;
     color: transparent;
   }
+  .page-tz {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
 
   /* --- Capture bar --- */
   .capture-input-wrap {
@@ -407,13 +413,16 @@
     z-index: 4;
   }
   .block.task { background: var(--accent-bg); padding-right: 26px; }
+  /* Done blocks keep their original color but fade — clearly differentiated without overriding tag color */
   .block.task.done {
-    background: var(--done-bg);
-    opacity: 0.92;
+    opacity: 0.45;
+    filter: saturate(0.7);
   }
-  .block.task.done .block-title { text-decoration: line-through; opacity: 0.85; }
+  .block.task.done .block-title { text-decoration: line-through; opacity: 0.9; }
+  /* Overdue: ring around the block, NOT a full color override (preserves tag color) */
   .block.task.overdue {
-    background: linear-gradient(135deg, #b91c1c 0%, #ef4444 100%);
+    outline: 2px solid #ef4444;
+    outline-offset: -2px;
   }
 
   /* Resize handles on task blocks */
@@ -583,8 +592,36 @@
   .pop-btn:hover { background: var(--border); }
   .pop-btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: white; }
   .pop-btn.primary:hover { background: var(--accent); }
+  .pop-btn.success { background: var(--done-strong); border-color: var(--done-strong); color: white; }
+  .pop-btn.success:hover { background: var(--done); }
   .pop-btn.danger { color: #ff9b8a; border-color: #4a2820; }
   .pop-btn.danger:hover { background: #2a1814; }
+  .pop-dur-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+  }
+  .pop-dur-current {
+    color: var(--accent);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+  .block-cal {
+    display: inline-block;
+    background: rgba(0,0,0,0.32);
+    padding: 0 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    margin-right: 5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+    line-height: 1.5;
+    opacity: 0.9;
+  }
   .pop-row .dur-pick {
     display: flex;
     gap: 5px;
@@ -857,6 +894,11 @@
   }
   .data-footer button:hover { color: var(--accent); border-color: var(--accent); }
 
+  #sync-status[data-kind="ok"] { color: var(--done); }
+  #sync-status[data-kind="syncing"] { color: var(--accent); }
+  #sync-status[data-kind="pending"] { color: var(--text-muted); }
+  #sync-status[data-kind="err"] { color: #ff9b8a; }
+
   /* Auth overlay (only visible in standalone/OAuth mode) */
   #auth-overlay {
     position: fixed;
@@ -972,6 +1014,7 @@
 <div class="wrap">
   <header class="page-head">
     <div class="page-month" id="page-month"></div>
+    <div class="page-tz" id="page-tz"></div>
   </header>
 
   <section class="inbox-panel">
@@ -1024,9 +1067,10 @@
 
   <div class="data-footer">
     <div class="data-info">
-      Your tasks live in this browser (localStorage) on this device only — they survive reloads and app restarts but don't sync elsewhere. Calendar refetches each open.
+      Tasks sync to a hidden folder in your Google Drive (only this app can see it). Backup / Restore JSON works alongside as a manual escape hatch.
     </div>
     <div class="data-actions">
+      <span id="sync-status" style="display:none;color:var(--text-muted);font-size:11px;font-weight:600;margin-right:6px;"></span>
       <button id="backup-btn">Backup</button>
       <input type="file" id="restore-input" accept=".json" style="display:none;" />
       <button id="restore-btn">Restore</button>
@@ -1043,8 +1087,11 @@
 // ────────────────────────────────────────────────────────────────────
 (function () {
   const GOOGLE_CLIENT_ID = "482368295724-p0njqusav03ff2jrcv9an3cank8jdqmq.apps.googleusercontent.com";
-  const SCOPE = "https://www.googleapis.com/auth/calendar";
-  const DISCOVERY = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
+  const SCOPE = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.appdata";
+  const DISCOVERY = [
+    "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest",
+    "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+  ];
   const TOKEN_KEY = "planner:gtoken:v1";
 
   // Cowork may inject window.cowork asynchronously. Wait briefly before deciding
@@ -1112,7 +1159,7 @@
   async function initGapi() {
     await waitFor(() => typeof gapi !== "undefined");
     await new Promise((res) => gapi.load("client", res));
-    await gapi.client.init({ discoveryDocs: [DISCOVERY] });
+    await gapi.client.init({ discoveryDocs: DISCOVERY });
   }
   async function initGis() {
     await waitFor(() => window.google && google.accounts && google.accounts.oauth2);
@@ -1142,6 +1189,167 @@
       askClaude: async () => null,
     };
   }
+
+  // ─── Google Drive sync (App Data folder) ──────────────────────────────
+  const STATE_FILE_NAME = "holding-pattern-state.json";
+  const SYNC_DEBOUNCE_MS = 4000;
+  const SYNC_KEY_PREFIX = "planner:";
+  const SYNC_EXCLUDE = new Set([
+    "planner:gtoken:v1",
+    "planner:events-cache:v1",
+    "planner:last-modified",
+  ]);
+  let driveStateFileId = null;
+  let syncDebounceTimer = null;
+  let isSyncing = false;
+  let suppressSyncDuringImport = false;
+  const origSetItem = localStorage.setItem.bind(localStorage);
+
+  function setSyncStatus(text, kind) {
+    const el = document.getElementById("sync-status");
+    if (!el) return;
+    el.textContent = text;
+    el.dataset.kind = kind || "";
+  }
+
+  async function driveFindStateFile() {
+    const r = await gapi.client.drive.files.list({
+      spaces: "appDataFolder",
+      fields: "files(id, name, modifiedTime)",
+      q: "name = '" + STATE_FILE_NAME + "'",
+      pageSize: 10,
+    });
+    const f = (r.result.files || [])[0];
+    driveStateFileId = f ? f.id : null;
+    return f || null;
+  }
+
+  async function driveReadState() {
+    const f = await driveFindStateFile();
+    if (!f) return null;
+    const r = await gapi.client.drive.files.get({
+      fileId: f.id,
+      alt: "media",
+    });
+    try {
+      const data = typeof r.body === "string" ? JSON.parse(r.body) : r.body;
+      return { data, modifiedTime: f.modifiedTime, id: f.id };
+    } catch (e) {
+      console.warn("[planner] drive parse failed", e);
+      return null;
+    }
+  }
+
+  async function driveWriteState(content) {
+    const metadata = { name: STATE_FILE_NAME };
+    if (!driveStateFileId) metadata.parents = ["appDataFolder"];
+    const boundary = "p" + Math.random().toString(36).slice(2);
+    const body = [
+      "--" + boundary,
+      "Content-Type: application/json; charset=UTF-8",
+      "",
+      JSON.stringify(metadata),
+      "--" + boundary,
+      "Content-Type: application/json",
+      "",
+      JSON.stringify(content),
+      "--" + boundary + "--",
+      "",
+    ].join("\r\n");
+    const res = await gapi.client.request({
+      path: driveStateFileId
+        ? "/upload/drive/v3/files/" + driveStateFileId
+        : "/upload/drive/v3/files",
+      method: driveStateFileId ? "PATCH" : "POST",
+      params: { uploadType: "multipart" },
+      headers: { "Content-Type": "multipart/related; boundary=" + boundary },
+      body,
+    });
+    if (!driveStateFileId && res.result && res.result.id) {
+      driveStateFileId = res.result.id;
+    }
+    return res.result;
+  }
+
+  async function syncToDrive() {
+    if (isSyncing || !window.plannerSync) return;
+    isSyncing = true;
+    setSyncStatus("Saving…", "syncing");
+    try {
+      const data = window.plannerSync.export();
+      await driveWriteState(data);
+      const t = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setSyncStatus("Synced " + t, "ok");
+    } catch (e) {
+      console.warn("[planner] drive sync failed", e);
+      setSyncStatus("Sync failed — see console", "err");
+    } finally {
+      isSyncing = false;
+    }
+  }
+
+  function scheduleSync() {
+    clearTimeout(syncDebounceTimer);
+    setSyncStatus("Pending…", "pending");
+    syncDebounceTimer = setTimeout(syncToDrive, SYNC_DEBOUNCE_MS);
+  }
+
+  function installLocalStorageHook() {
+    localStorage.setItem = function (key, value) {
+      origSetItem(key, value);
+      if (suppressSyncDuringImport) return;
+      if (typeof key === "string" && key.startsWith(SYNC_KEY_PREFIX) && !SYNC_EXCLUDE.has(key)) {
+        origSetItem("planner:last-modified", new Date().toISOString());
+        scheduleSync();
+      }
+    };
+  }
+
+  async function pullFromDriveOnBoot() {
+    if (!window.plannerSync) {
+      // Planner not ready yet — try again
+      setTimeout(pullFromDriveOnBoot, 200);
+      return;
+    }
+    setSyncStatus("Loading…", "syncing");
+    try {
+      const result = await driveReadState();
+      if (!result) {
+        // No remote yet — push local up
+        await syncToDrive();
+        return;
+      }
+      const remote = result.data;
+      const remoteTs = new Date(remote.exportedAt || result.modifiedTime).getTime();
+      const localStr = localStorage.getItem("planner:last-modified") || "1970-01-01T00:00:00Z";
+      const localTs = new Date(localStr).getTime();
+      if (remoteTs > localTs) {
+        suppressSyncDuringImport = true;
+        try {
+          window.plannerSync.import(remote);
+          origSetItem("planner:last-modified", remote.exportedAt || result.modifiedTime);
+        } finally { suppressSyncDuringImport = false; }
+        window.plannerSync.refresh();
+        setSyncStatus("Synced from cloud", "ok");
+      } else if (localTs > remoteTs) {
+        await syncToDrive();
+      } else {
+        const t = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        setSyncStatus("Synced " + t, "ok");
+      }
+    } catch (e) {
+      console.warn("[planner] drive pull failed", e);
+      setSyncStatus("Sync error", "err");
+    }
+  }
+
+  function setupDriveSync() {
+    const el = document.getElementById("sync-status");
+    if (el) el.style.display = "";
+    installLocalStorageHook();
+    pullFromDriveOnBoot();
+  }
+  // ─── End Drive sync ────────────────────────────────────────────────────
 
   async function callMcpToolViaGapi(name, params) {
     params = params || {};
@@ -1243,6 +1451,7 @@
       () => {
         installAdapter();
         overlay.classList.remove("show");
+        setupDriveSync();
       },
       (err) => setStatus("Sign-in failed: " + err, true),
     );
@@ -1253,6 +1462,7 @@
       gapi.client.setToken({ access_token: stored.accessToken });
       installAdapter();
       overlay.classList.remove("show");
+      setupDriveSync();
       return;
     }
 
@@ -1661,6 +1871,17 @@ function refreshColorIdxFromAvailable() {
   }
 }
 
+function reapplyCalOverrides() {
+  // Reload color overrides from localStorage and apply to availableCalendars + events.
+  // Used after a Restore so in-memory state matches what's just been written back.
+  const overrides = loadCalColorOverrides();
+  for (let i = 0; i < availableCalendars.length; i++) {
+    const c = availableCalendars[i];
+    c.colorIdx = overrides[c.id] != null ? overrides[c.id] : (i % CAL_COLORS.length);
+  }
+  refreshColorIdxFromAvailable();
+}
+
 async function loadCalendar() {
   const start = startOfDay();
   const end = addDays(start, 14);
@@ -1748,10 +1969,23 @@ function tasksForDay(date) {
 // ---------- Render: day tabs ----------
 function renderPageMonth() {
   const el = document.getElementById("page-month");
-  if (!el) return;
-  const offset = state.activeDayOffset || 0;
-  const d = addDays(startOfDay(), offset);
-  el.textContent = d.toLocaleDateString([], { month: "long", year: "numeric" });
+  if (el) {
+    const offset = state.activeDayOffset || 0;
+    const d = addDays(startOfDay(), offset);
+    el.textContent = d.toLocaleDateString([], { month: "long", year: "numeric" });
+  }
+  const tzEl = document.getElementById("page-tz");
+  if (tzEl) {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+      // Append GMT offset
+      const offMin = -new Date().getTimezoneOffset();
+      const sign = offMin >= 0 ? "+" : "-";
+      const ah = String(Math.floor(Math.abs(offMin) / 60)).padStart(2, "0");
+      const am = String(Math.abs(offMin) % 60).padStart(2, "0");
+      tzEl.textContent = `${tz}  ·  GMT${sign}${ah}:${am}`;
+    } catch { tzEl.textContent = ""; }
+  }
 }
 
 function renderDayTabs() {
@@ -1808,8 +2042,17 @@ function renderInbox() {
       item.classList.add("dragging");
       e.dataTransfer.setData("text/plain", id);
       e.dataTransfer.effectAllowed = "move";
+      // Track the task being dragged so the grid can paint a snap preview
+      const t = loadStore().find(x => x.id === id);
+      window.__inboxDragTask = t || null;
     });
-    item.addEventListener("dragend", () => item.classList.remove("dragging"));
+    item.addEventListener("dragend", () => {
+      item.classList.remove("dragging");
+      window.__inboxDragTask = null;
+      removeGhost();
+      const gridEl = document.getElementById("grid");
+      if (gridEl) gridEl.classList.remove("drop-over");
+    });
     item.addEventListener("click", (e) => {
       if (e.target.dataset.action === "del") return;
       // Schedule for the active day at a default time
@@ -1947,10 +2190,11 @@ function renderGrid() {
     const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}  (${tStr})${evTag ? "  •  #" + evTag : ""}`;
     const logged = isEventLogged(ev.id);
     const evTagChip = evTag ? `<span class="block-tag">${escapeHtml(evTag)}</span>` : "";
+    const calChip = ev.calName ? `<span class="block-cal">${escapeHtml(ev.calName)}</span>` : "";
     html += `<div class="block event ${logged ? "logged" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" style="top:${top}px;height:${height}px;${styleBg}" title="${escapeHtml(tooltip)}">
       <div class="block-check ${logged ? "checked" : ""}" data-action="toggle-event-log" title="${logged ? "Unlog" : "Log for bi-weekly"}"></div>
       ${showTime ? `<div class="block-time" style="position:relative;z-index:1;">${escapeHtml(tStr)}</div>` : ""}
-      <div class="block-title" style="position:relative;z-index:1;">${evTagChip}${escapeHtml(ev.summary)}</div>
+      <div class="block-title" style="position:relative;z-index:1;">${evTagChip}${calChip}${escapeHtml(ev.summary)}</div>
     </div>`;
   }
 
@@ -1965,12 +2209,13 @@ function renderGrid() {
     const short = dur < 30;
     const showTime = dur >= 30;
     const isDone = tk.status === "done";
-    const overdue = !isDone && new Date(tk.scheduledFor) < new Date() && offset === 0;
+    // No overdue treatment — past-time tasks just look like normal tasks.
+    const overdue = false;
     const startMs = new Date(tk.scheduledFor).getTime();
     const endMs = startMs + dur * 60000;
     const tStr = `${fmtTime(tk.scheduledFor)}–${fmtTime(new Date(endMs).toISOString())}`;
-    // Tag color overrides default orange (unless done/overdue, which keep their semantic colors)
-    const customBg = (!isDone && !overdue) ? tagBg(tk.tag) : null;
+    // Tag color always applies (overdue shows as a red ring; done fades opacity)
+    const customBg = tagBg(tk.tag);
     const styleBg = customBg ? `background:${customBg};` : "";
     const tagChip = tk.tag ? `<span class="block-tag">${escapeHtml(tk.tag)}</span>` : "";
     html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}">
@@ -2075,8 +2320,8 @@ function onBlockMouseMove(e) {
     document.body.style.userSelect = "none";
     document.body.style.cursor = pendingDrag.kind === "move" ? "grabbing" : "ns-resize";
   }
-  // Snap delta to 30 min (= 2 slots = 32px)
-  const snapPx = SLOT_HEIGHT * 2;
+  // Snap delta to 15 min (= 1 slot = 16px) when moving/resizing existing blocks
+  const snapPx = SLOT_HEIGHT;
   const snappedDy = Math.round(dy / snapPx) * snapPx;
   const ctx = document.getElementById("grid")._dayCtx;
   if (!ctx) return;
@@ -2154,6 +2399,23 @@ function onBlockMouseUp(e) {
 document.addEventListener("mousemove", onBlockMouseMove);
 document.addEventListener("mouseup", onBlockMouseUp);
 
+// Global keyboard shortcuts
+document.addEventListener("keydown", (e) => {
+  // Escape closes any open popover
+  if (e.key === "Escape") {
+    if (activePopover) { closePopover(); return; }
+    // Also blur any focused input/textarea so users can quickly drop focus
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    return;
+  }
+  // Cmd/Ctrl-K focuses the capture bar
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    const cap = document.getElementById("capture");
+    if (cap) cap.focus();
+  }
+});
+
 // ---------- Grid-level listeners (attached once) ----------
 function wireGridListeners() {
   const gridEl = document.getElementById("grid");
@@ -2161,13 +2423,30 @@ function wireGridListeners() {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     gridEl.classList.add("drop-over");
+    // Live preview ghost while dragging from the inbox
+    const ctx = gridEl._dayCtx;
+    const dragTask = window.__inboxDragTask;
+    if (!ctx || !dragTask) return;
+    const rect = gridEl.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const rawMins = ctx.startHour * 60 + (y / SLOT_HEIGHT) * 15;
+    const dropMins = Math.max(0, Math.round(rawMins / 30) * 30);
+    const dropTime = new Date(ctx.day);
+    dropTime.setHours(0, 0, 0, 0);
+    dropTime.setMinutes(dropMins);
+    paintGhost(dropTime, dragTask.estimatedMinutes || 30, false);
   });
   gridEl.addEventListener("dragleave", (e) => {
-    if (e.target === gridEl) gridEl.classList.remove("drop-over");
+    if (e.target === gridEl) {
+      gridEl.classList.remove("drop-over");
+      removeGhost();
+    }
   });
   gridEl.addEventListener("drop", (e) => {
     e.preventDefault();
     gridEl.classList.remove("drop-over");
+    removeGhost();
+    window.__inboxDragTask = null;
     const id = e.dataTransfer.getData("text/plain");
     if (!id) return;
     const ctx = gridEl._dayCtx;
@@ -2391,15 +2670,23 @@ function openNewTaskPopover(x, y, atTime) {
     <div class="pop-row" style="gap:4px;">
       <button class="mode-toggle ${lastMode === "task" ? "active" : ""}" data-mode="task">Task</button>
       <button class="mode-toggle ${lastMode === "event" ? "active" : ""}" data-mode="event">Event</button>
-      <span style="margin-left:auto;color:var(--text-muted);font-size:12px;">at ${escapeHtml(tStr)}</span>
     </div>
     <div class="pop-row"><input class="pop-input" id="np-text" placeholder="What's it called?" autofocus /></div>
+    <div class="pop-row" style="gap:8px;align-items:center;">
+      <span class="pop-dur-label">Start</span>
+      <input class="pop-input" id="np-time" type="time" value="${escapeHtml(tStr)}" step="900" style="max-width:110px;" />
+      <span class="pop-dur-label">End</span>
+      <input class="pop-input" id="np-end" type="time" value="${escapeHtml(fmtTime(new Date(atTime.getTime() + 30 * 60000).toISOString()))}" step="900" style="max-width:110px;" />
+    </div>
+    <div class="pop-row" style="gap:8px;align-items:center;">
+      <span class="pop-dur-label">Duration <span class="pop-dur-current" id="np-dur-current">30m</span></span>
+    </div>
     <div class="pop-row dur-pick">
-      <button data-dur="15">15m</button>
-      <button data-dur="30" class="active">30m</button>
-      <button data-dur="45">45m</button>
-      <button data-dur="60">1h</button>
-      <button data-dur="90">1.5h</button>
+      <button type="button" data-dur="15">15m</button>
+      <button type="button" data-dur="30" class="active">30m</button>
+      <button type="button" data-dur="45">45m</button>
+      <button type="button" data-dur="60">1h</button>
+      <button type="button" data-dur="90">1.5h</button>
     </div>
     <div id="np-task-extras">
       <div id="np-tagrow">${tagSelectorHtml(null)}</div>
@@ -2445,13 +2732,47 @@ function openNewTaskPopover(x, y, atTime) {
       applyMode();
     });
   });
+  function refreshNpDur() {
+    pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === dur));
+    pop.querySelector("#np-dur-current").textContent = dur + "m";
+    // Sync end time input
+    const startTime = pop.querySelector("#np-time").value;
+    if (startTime) {
+      const [h, m] = startTime.split(":").map(Number);
+      const endMins = h * 60 + m + dur;
+      const eh = Math.floor(endMins / 60) % 24;
+      const em = endMins % 60;
+      pop.querySelector("#np-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
+    }
+  }
   pop.querySelectorAll(".dur-pick button").forEach(b => {
     b.addEventListener("click", () => {
-      pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.remove("active"));
-      b.classList.add("active");
       dur = parseInt(b.dataset.dur, 10);
+      refreshNpDur();
       paintGhost(atTime, dur, mode === "event");
     });
+  });
+  // Start time edits — update atTime live
+  pop.querySelector("#np-time").addEventListener("change", (e) => {
+    const v = e.target.value;
+    if (!v) return;
+    const [h, m] = v.split(":").map(Number);
+    atTime.setHours(h, m, 0, 0);
+    refreshNpDur();
+    paintGhost(atTime, dur, mode === "event");
+  });
+  // End time edits — recompute dur
+  pop.querySelector("#np-end").addEventListener("change", () => {
+    const startStr = pop.querySelector("#np-time").value;
+    const endStr = pop.querySelector("#np-end").value;
+    if (!startStr || !endStr) return;
+    const [sh, sm] = startStr.split(":").map(Number);
+    const [eh, em] = endStr.split(":").map(Number);
+    let mins = (eh * 60 + em) - (sh * 60 + sm);
+    if (mins <= 0) mins += 24 * 60;
+    dur = Math.max(15, Math.round(mins / 15) * 15);
+    refreshNpDur();
+    paintGhost(atTime, dur, mode === "event");
   });
   function rewireTags() {
     wireTagSelector(pop, null, (tag) => {
@@ -2537,12 +2858,13 @@ function openTaskPopover(blockEl, id) {
   const rect = blockEl.getBoundingClientRect();
   const tStr = fmtTime(t.scheduledFor);
   const dur = t.estimatedMinutes || 30;
+  const startMs = new Date(t.scheduledFor).getTime();
+  const endStr = fmtTime(new Date(startMs + dur * 60000).toISOString());
   const html = `
     <div class="pop-row"><input class="pop-input" id="ep-text" value="${escapeHtml(t.text)}" /></div>
-    <div class="pop-row" style="gap:8px;">
-      <label style="color:var(--text-muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Time</label>
-      <input class="pop-input" id="ep-time" type="time" value="${escapeHtml(tStr)}" step="900" style="max-width:120px;" />
-      <select class="pop-input" id="ep-day" style="max-width:140px;">
+    <div class="pop-row" style="gap:8px;align-items:center;flex-wrap:wrap;">
+      <span class="pop-dur-label">Day</span>
+      <select class="pop-input" id="ep-day" style="max-width:160px;">
         ${[-1,0,1,2,3,4,5,6,7].map(off => {
           const d = addDays(startOfDay(), off);
           const label = off === 0 ? "Today" : off === 1 ? "Tomorrow" : off === -1 ? "Yesterday"
@@ -2552,31 +2874,52 @@ function openTaskPopover(blockEl, id) {
         }).join("")}
       </select>
     </div>
+    <div class="pop-row" style="gap:8px;align-items:center;">
+      <span class="pop-dur-label">Start</span>
+      <input class="pop-input" id="ep-time" type="time" value="${escapeHtml(tStr)}" step="900" style="max-width:110px;" />
+      <span class="pop-dur-label">End</span>
+      <input class="pop-input" id="ep-end" type="time" value="${escapeHtml(endStr)}" step="900" style="max-width:110px;" />
+    </div>
+    <div class="pop-row" style="gap:8px;align-items:center;">
+      <span class="pop-dur-label">Duration <span class="pop-dur-current" id="ep-dur-current">${dur}m</span></span>
+    </div>
     <div class="pop-row dur-pick">
-      <button data-dur="15" ${dur===15?"class='active'":""}>15m</button>
-      <button data-dur="30" ${dur===30?"class='active'":""}>30m</button>
-      <button data-dur="45" ${dur===45?"class='active'":""}>45m</button>
-      <button data-dur="60" ${dur===60?"class='active'":""}>1h</button>
-      <button data-dur="90" ${dur===90?"class='active'":""}>1.5h</button>
+      <button type="button" data-dur="15" ${dur===15?"class='active'":""}>15m</button>
+      <button type="button" data-dur="30" ${dur===30?"class='active'":""}>30m</button>
+      <button type="button" data-dur="45" ${dur===45?"class='active'":""}>45m</button>
+      <button type="button" data-dur="60" ${dur===60?"class='active'":""}>1h</button>
+      <button type="button" data-dur="90" ${dur===90?"class='active'":""}>1.5h</button>
     </div>
     <div id="ep-tagrow">${tagSelectorHtml(t.tag)}</div>
     <div class="pop-row" style="justify-content:space-between;">
       <button class="pop-btn danger" id="ep-del">Delete</button>
       <div style="display:flex;gap:6px;">
         <button class="pop-btn" id="ep-unsched">→ Inbox</button>
-        <button class="pop-btn primary" id="ep-done">${t.status === "done" ? "Undo" : "Done"}</button>
+        <button class="pop-btn success" id="ep-done">${t.status === "done" ? "Undo" : "Done"}</button>
+        <button class="pop-btn primary" id="ep-ok">OK</button>
       </div>
     </div>`;
   const pop = showPopover(html, rect.right, rect.top);
   let newDur = dur;
+  function refreshEpDur() {
+    pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === newDur));
+    pop.querySelector("#ep-dur-current").textContent = newDur + "m";
+    // Sync end time input
+    const startTime = pop.querySelector("#ep-time").value;
+    if (startTime) {
+      const [h, m] = startTime.split(":").map(Number);
+      const endMins = h * 60 + m + newDur;
+      const eh = Math.floor(endMins / 60) % 24;
+      const em = endMins % 60;
+      pop.querySelector("#ep-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
+    }
+  }
   pop.querySelectorAll(".dur-pick button").forEach(b => {
     b.addEventListener("click", () => {
-      pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.remove("active"));
-      b.classList.add("active");
       newDur = parseInt(b.dataset.dur, 10);
-      // Apply immediately
       t.estimatedMinutes = newDur;
       saveStore(arr);
+      refreshEpDur();
       renderGrid();
     });
   });
@@ -2587,11 +2930,10 @@ function openTaskPopover(blockEl, id) {
   });
   pop.querySelector("#ep-text").addEventListener("keydown", (e) => {
     if (e.key === "Enter") e.target.blur();
-    if (e.key === "Escape") closePopover();
   });
-  // Time + day pickers — change scheduledFor live
+  // Day + start time → set scheduledFor live
   function applyTimeAndDay() {
-    const timeStr = pop.querySelector("#ep-time").value; // "HH:MM"
+    const timeStr = pop.querySelector("#ep-time").value;
     const dayOff = parseInt(pop.querySelector("#ep-day").value, 10);
     if (!timeStr || isNaN(dayOff)) return;
     const [h, m] = timeStr.split(":").map(Number);
@@ -2600,10 +2942,26 @@ function openTaskPopover(blockEl, id) {
     t.scheduledFor = d.toISOString();
     if (t.status === "inbox") t.status = "scheduled";
     saveStore(arr);
+    refreshEpDur();
     renderAll();
   }
   pop.querySelector("#ep-time").addEventListener("change", applyTimeAndDay);
   pop.querySelector("#ep-day").addEventListener("change", applyTimeAndDay);
+  // End time → recompute duration
+  pop.querySelector("#ep-end").addEventListener("change", () => {
+    const startStr = pop.querySelector("#ep-time").value;
+    const endStr = pop.querySelector("#ep-end").value;
+    if (!startStr || !endStr) return;
+    const [sh, sm] = startStr.split(":").map(Number);
+    const [eh, em] = endStr.split(":").map(Number);
+    let mins = (eh * 60 + em) - (sh * 60 + sm);
+    if (mins <= 0) mins += 24 * 60; // crosses midnight
+    newDur = Math.max(15, Math.round(mins / 15) * 15);
+    t.estimatedMinutes = newDur;
+    saveStore(arr);
+    refreshEpDur();
+    renderGrid();
+  });
   // Wire tag selector — re-render on change for active state
   function rewireEpTags() {
     wireTagSelector(pop, t, (tag) => {
@@ -2640,6 +2998,7 @@ function openTaskPopover(blockEl, id) {
     closePopover();
     renderAll();
   });
+  pop.querySelector("#ep-ok").addEventListener("click", () => closePopover());
 }
 
 // ---------- Event edit popover ----------
@@ -2669,22 +3028,31 @@ function openEventPopover(blockEl, ev) {
       ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener" style="margin-left:auto;color:var(--text-muted);font-size:11px;text-decoration:none;">Open in Google ↗</a>` : ""}
     </div>
     <div class="pop-row"><input class="pop-input" id="ev-text" value="${escapeHtml(ev.summary)}" /></div>
-    <div class="pop-row" style="gap:8px;">
-      <input class="pop-input" id="ev-time" type="time" value="${escapeHtml(tStr)}" step="900" style="max-width:120px;" />
+    <div class="pop-row" style="gap:8px;align-items:center;flex-wrap:wrap;">
+      <span class="pop-dur-label">Day</span>
       <select class="pop-input" id="ev-day" style="max-width:160px;">${dayOptions}</select>
     </div>
+    <div class="pop-row" style="gap:8px;align-items:center;">
+      <span class="pop-dur-label">Start</span>
+      <input class="pop-input" id="ev-time" type="time" value="${escapeHtml(tStr)}" step="900" style="max-width:110px;" />
+      <span class="pop-dur-label">End</span>
+      <input class="pop-input" id="ev-end" type="time" value="${escapeHtml(fmtTime(new Date(new Date(ev.startIso).getTime() + dur * 60000).toISOString()))}" step="900" style="max-width:110px;" />
+    </div>
+    <div class="pop-row" style="gap:8px;align-items:center;">
+      <span class="pop-dur-label">Duration <span class="pop-dur-current" id="ev-dur-current">${dur}m</span></span>
+    </div>
     <div class="pop-row dur-pick">
-      <button data-dur="15" ${dur===15?"class='active'":""}>15m</button>
-      <button data-dur="30" ${dur===30?"class='active'":""}>30m</button>
-      <button data-dur="45" ${dur===45?"class='active'":""}>45m</button>
-      <button data-dur="60" ${dur===60?"class='active'":""}>1h</button>
-      <button data-dur="90" ${dur===90?"class='active'":""}>1.5h</button>
+      <button type="button" data-dur="15" ${dur===15?"class='active'":""}>15m</button>
+      <button type="button" data-dur="30" ${dur===30?"class='active'":""}>30m</button>
+      <button type="button" data-dur="45" ${dur===45?"class='active'":""}>45m</button>
+      <button type="button" data-dur="60" ${dur===60?"class='active'":""}>1h</button>
+      <button type="button" data-dur="90" ${dur===90?"class='active'":""}>1.5h</button>
     </div>
     <div id="ev-tagrow">${tagSelectorHtml(getEventTag(ev.id))}</div>
     <div class="pop-row" id="ev-status" style="display:none;font-size:12px;"></div>
     <div class="pop-row" style="justify-content:space-between;">
       <button class="pop-btn danger" id="ev-del">Delete</button>
-      <span style="color:var(--text-dim);font-size:11px;">Changes save automatically</span>
+      <button class="pop-btn primary" id="ev-ok">OK</button>
     </div>`;
   const pop = showPopover(html, rect.right, rect.top);
 
@@ -2748,16 +3116,42 @@ function openEventPopover(blockEl, ev) {
   pop.querySelector("#ev-time").addEventListener("change", applyTimeAndDay);
   pop.querySelector("#ev-day").addEventListener("change", applyTimeAndDay);
 
+  function refreshEvDur() {
+    pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === pendingDur));
+    pop.querySelector("#ev-dur-current").textContent = pendingDur + "m";
+    const startTime = pop.querySelector("#ev-time").value;
+    if (startTime) {
+      const [h, m] = startTime.split(":").map(Number);
+      const endMins = h * 60 + m + pendingDur;
+      const eh = Math.floor(endMins / 60) % 24;
+      const em = endMins % 60;
+      pop.querySelector("#ev-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
+    }
+  }
   // Duration buttons — save on change
   pop.querySelectorAll(".dur-pick button").forEach(b => {
     b.addEventListener("click", () => {
-      pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.remove("active"));
-      b.classList.add("active");
       pendingDur = parseInt(b.dataset.dur, 10);
+      refreshEvDur();
       const newStart = new Date(ev.startIso);
       const newEnd = new Date(newStart.getTime() + pendingDur * 60000);
       saveUpdate({ startTime: newStart.toISOString(), endTime: newEnd.toISOString() });
     });
+  });
+  // End time input — recompute duration & save
+  pop.querySelector("#ev-end").addEventListener("change", () => {
+    const startStr = pop.querySelector("#ev-time").value;
+    const endStr = pop.querySelector("#ev-end").value;
+    if (!startStr || !endStr) return;
+    const [sh, sm] = startStr.split(":").map(Number);
+    const [eh, em] = endStr.split(":").map(Number);
+    let mins = (eh * 60 + em) - (sh * 60 + sm);
+    if (mins <= 0) mins += 24 * 60;
+    pendingDur = Math.max(15, Math.round(mins / 15) * 15);
+    refreshEvDur();
+    const newStart = new Date(ev.startIso);
+    const newEnd = new Date(newStart.getTime() + pendingDur * 60000);
+    saveUpdate({ startTime: newStart.toISOString(), endTime: newEnd.toISOString() });
   });
 
   // Tag selector — local only (event tags live in localStorage, not on Google Calendar)
@@ -2795,6 +3189,7 @@ function openEventPopover(blockEl, ev) {
       setStatus("Delete failed: " + (e && e.message ? e.message : "see console"), true);
     }
   });
+  pop.querySelector("#ev-ok").addEventListener("click", () => closePopover());
 }
 
 // ---------- Done section ----------
@@ -3115,15 +3510,67 @@ function expandColorGrid(dotBtn) {
 
 document.getElementById("cal-picker-btn").addEventListener("click", openCalendarPicker);
 
-// Backup / Restore
+// ---------- Backup / Restore (full data set) ----------
+function exportAllData() {
+  let selCals = null;
+  try { selCals = JSON.parse(localStorage.getItem(CALS_KEY) || "null"); } catch {}
+  return {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    tasks: loadStore(),
+    state: loadState(),
+    tags: loadTags(),
+    eventTags: loadEventTags(),
+    loggedEvents: loadLoggedEvents(),
+    selectedCalendars: selCals, // array of cal IDs, or null = use default (primary only)
+    calColorOverrides: loadCalColorOverrides(),
+    uiState: {
+      inboxOpen: localStorage.getItem("planner:inbox-open"),
+      lastEventCal: localStorage.getItem("planner:lastEventCal"),
+      newMode: localStorage.getItem("planner:newMode"),
+    },
+  };
+}
+
+function importAllData(data) {
+  if (!data || typeof data !== "object") throw new Error("Not a valid backup file.");
+  if (!Array.isArray(data.tasks)) throw new Error("Backup is missing tasks list.");
+  saveStore(data.tasks);
+  if (data.state) saveState(data.state);
+  if (data.tags && typeof data.tags === "object") saveTags(data.tags);
+  if (data.eventTags && typeof data.eventTags === "object") saveEventTags(data.eventTags);
+  if (data.loggedEvents && typeof data.loggedEvents === "object") saveLoggedEvents(data.loggedEvents);
+  if (data.calColorOverrides && typeof data.calColorOverrides === "object") {
+    try { localStorage.setItem(CAL_COLORS_KEY, JSON.stringify(data.calColorOverrides)); } catch {}
+  }
+  if (Array.isArray(data.selectedCalendars)) {
+    try { localStorage.setItem(CALS_KEY, JSON.stringify(data.selectedCalendars)); } catch {}
+  } else if (data.selectedCalendars === null) {
+    try { localStorage.removeItem(CALS_KEY); } catch {}
+  }
+  if (data.uiState && typeof data.uiState === "object") {
+    if (typeof data.uiState.inboxOpen === "string") localStorage.setItem("planner:inbox-open", data.uiState.inboxOpen);
+    if (typeof data.uiState.lastEventCal === "string") localStorage.setItem("planner:lastEventCal", data.uiState.lastEventCal);
+    if (typeof data.uiState.newMode === "string") localStorage.setItem("planner:newMode", data.uiState.newMode);
+  }
+  return true;
+}
+
+// Expose the data shuttle for the OAuth bootstrap's Drive sync layer
+window.plannerSync = {
+  export: exportAllData,
+  import: importAllData,
+  refresh: () => { reapplyCalOverrides(); renderAll(); },
+};
+
 document.getElementById("backup-btn").addEventListener("click", () => {
-  const data = { tasks: loadStore(), state: loadState(), exportedAt: new Date().toISOString() };
+  const data = exportAllData();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
-  a.download = `planner-backup-${stamp}.json`;
+  a.download = `holding-pattern-${stamp}.json`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 });
@@ -3136,10 +3583,12 @@ document.getElementById("restore-input").addEventListener("change", async (e) =>
   try {
     const text = await file.text();
     const data = JSON.parse(text);
-    if (!data.tasks || !Array.isArray(data.tasks)) throw new Error("Not a valid backup file.");
-    if (!confirm(`Restore ${data.tasks.length} tasks? This replaces your current data.`)) return;
-    saveStore(data.tasks);
-    if (data.state) saveState(data.state);
+    const taskCount = Array.isArray(data.tasks) ? data.tasks.length : 0;
+    const tagCount = data.tags ? Object.keys(data.tags).length : 0;
+    const calColors = data.calColorOverrides ? Object.keys(data.calColorOverrides).length : 0;
+    if (!confirm(`Restore from backup?\n\n${taskCount} tasks · ${tagCount} tags · ${calColors} calendar color overrides\n\nThis replaces your current data.`)) return;
+    importAllData(data);
+    reapplyCalOverrides();
     renderAll();
   } catch (err) {
     alert("Restore failed: " + err.message);
