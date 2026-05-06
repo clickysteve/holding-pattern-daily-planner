@@ -476,12 +476,7 @@
     z-index: 4;
   }
   .block.task { background: var(--accent-bg); padding-right: 26px; }
-  /* Done blocks keep their original color but fade — clearly differentiated without overriding tag color */
-  .block.task.done {
-    opacity: 0.45;
-    filter: saturate(0.7);
-  }
-  .block.task.done .block-title { text-decoration: line-through; opacity: 0.9; }
+  /* Done blocks: keep the original colour as-is — only the green tick in the corner indicates done. */
   /* Overdue: ring around the block, NOT a full color override (preserves tag color) */
   .block.task.overdue {
     outline: 2px solid #ef4444;
@@ -618,6 +613,8 @@
     overflow: hidden;
   }
   .block.short .block-meta { display: none; }
+  /* Hide meta chips in 7-day view — columns are too narrow there. 3 and 5-day still show them. */
+  .grid[data-day-count="7"] .block-meta { display: none; }
   .block-meta .block-tag,
   .block-meta .block-cal {
     margin-right: 0;
@@ -2590,9 +2587,11 @@ function renderGrid() {
   if (isMulti) {
     gridEl.classList.add("multi");
     gridEl.style.setProperty("--day-count", dayCount);
+    gridEl.dataset.dayCount = dayCount;
   } else {
     gridEl.classList.remove("multi");
     gridEl.style.removeProperty("--day-count");
+    delete gridEl.dataset.dayCount;
   }
 
   const slotPx = (mins) => Math.max(0, mins / 15) * SLOT_HEIGHT;
