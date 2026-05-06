@@ -359,6 +359,19 @@
     flex: 1;
     min-width: 0;
   }
+  .all-day-grid {
+    display: grid;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+  }
+  .all-day-grid .all-day-col {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-content: flex-start;
+    min-width: 0;
+  }
   .all-day-item {
     font-size: 11px;
     font-weight: 600;
@@ -2583,26 +2596,24 @@ function renderGrid() {
   // All-day strip — single-day or per-day
   const allDayHost = document.getElementById("all-day-strip");
   if (isMulti) {
-    // Show all-day events grouped by day, each with a small day prefix
-    const allItems = [];
-    days.forEach((d, i) => {
+    // One column per day; each column lists only its own all-day events
+    let any = false;
+    const cols = days.map((d) => {
       const evs = allDayEventsForDay(d);
-      for (const ev of evs) {
-        allItems.push({ ev, dayIdx: i });
-      }
-    });
-    if (allItems.length) {
-      const html = allItems.map(({ ev, dayIdx }) => {
+      if (evs.length) any = true;
+      const inner = evs.map(ev => {
         const stops = CAL_COLORS[ev.colorIdx || 0];
         const bg = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
-        const dayName = days[dayIdx].toLocaleDateString([], { weekday: "short" });
-        const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}  (${dayName})`;
-        const inner = `<span style="opacity:0.75;font-size:9px;margin-right:4px;">${dayName.toUpperCase()}</span>${escapeHtml(ev.summary)}`;
+        const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}`;
+        const html = `${escapeHtml(ev.summary)}`;
         return ev.url
-          ? `<a class="all-day-item" href="${escapeHtml(ev.url)}" target="_blank" rel="noopener" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</a>`
-          : `<span class="all-day-item no-link" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</span>`;
+          ? `<a class="all-day-item" href="${escapeHtml(ev.url)}" target="_blank" rel="noopener" style="background:${bg};" title="${escapeHtml(tooltip)}">${html}</a>`
+          : `<span class="all-day-item no-link" style="background:${bg};" title="${escapeHtml(tooltip)}">${html}</span>`;
       }).join("");
-      allDayHost.innerHTML = `<div class="all-day-label">all day</div><div class="all-day-items">${html}</div>`;
+      return `<div class="all-day-col">${inner}</div>`;
+    }).join("");
+    if (any) {
+      allDayHost.innerHTML = `<div class="all-day-label">all day</div><div class="all-day-grid" style="grid-template-columns: repeat(${dayCount}, 1fr);">${cols}</div>`;
     } else {
       allDayHost.innerHTML = "";
     }
@@ -3054,6 +3065,22 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     const cap = document.getElementById("capture");
     if (cap) cap.focus();
+    return;
+  }
+  // Left/Right arrows navigate between days (single-day or multi-day)
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    if (activePopover) return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT" || ae.isContentEditable)) return;
+    e.preventDefault();
+    const cur = state.activeDayOffset || 0;
+    const next = e.key === "ArrowRight" ? Math.min(6, cur + 1) : Math.max(0, cur - 1);
+    if (next === cur) return;
+    state.activeDayOffset = next;
+    saveState(state);
+    renderDayTabs();
+    renderGrid();
+    renderPageMonth();
   }
 });
 
