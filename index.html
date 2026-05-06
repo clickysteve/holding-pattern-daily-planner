@@ -2371,6 +2371,57 @@ function renderGrid() {
     }
   }
 
+  // ── Overlap layout: when blocks overlap in time, lay them out side-by-side ──
+  const layoutMap = (() => {
+    const items = [];
+    for (const ev of events) {
+      items.push({ id: "e:" + ev.id, sMins: minsFromStart(ev.startIso), eMins: minsFromStart(ev.endIso) });
+    }
+    for (const tk of tasks) {
+      const s = minsFromStart(tk.scheduledFor);
+      items.push({ id: "t:" + tk.id, sMins: s, eMins: s + (tk.estimatedMinutes || 30) });
+    }
+    items.sort((a, b) => a.sMins - b.sMins);
+    const map = new Map();
+    let cluster = [];
+    let clusterEnd = -Infinity;
+    const finalize = () => {
+      if (!cluster.length) return;
+      const colEnds = [];
+      for (const it of cluster) {
+        let placed = false;
+        for (let i = 0; i < colEnds.length; i++) {
+          if (colEnds[i] <= it.sMins) {
+            colEnds[i] = it.eMins;
+            map.set(it.id, { col: i, totalCols: 0 });
+            placed = true; break;
+          }
+        }
+        if (!placed) {
+          colEnds.push(it.eMins);
+          map.set(it.id, { col: colEnds.length - 1, totalCols: 0 });
+        }
+      }
+      const total = colEnds.length;
+      for (const it of cluster) map.get(it.id).totalCols = total;
+      cluster = []; clusterEnd = -Infinity;
+    };
+    for (const it of items) {
+      if (it.sMins >= clusterEnd) finalize();
+      cluster.push(it);
+      clusterEnd = Math.max(clusterEnd, it.eMins);
+    }
+    finalize();
+    return map;
+  })();
+
+  function colInsetStyle(info) {
+    if (!info || info.totalCols <= 1) return "";
+    const cw = 100 / info.totalCols;
+    const lf = info.col * cw;
+    return `left:calc(${lf}% + 4px);width:calc(${cw}% - 8px);right:auto;`;
+  }
+
   // Events
   for (const ev of events) {
     const sMins = minsFromStart(ev.startIso);
@@ -2378,6 +2429,7 @@ function renderGrid() {
     const dur = Math.max(15, eMins - sMins);
     const top = slotPx(sMins);
     const height = slotPx(dur) - 2;
+    const colStyle = colInsetStyle(layoutMap.get("e:" + ev.id));
     const tall = dur >= 45;
     const medium = dur >= 30 && dur < 45;
     const short = dur < 30;
@@ -2394,7 +2446,7 @@ function renderGrid() {
     const evTagChip = evTag ? `<span class="block-tag">${escapeHtml(evTag)}</span>` : "";
     const calChip = ev.calName ? `<span class="block-cal">${escapeHtml(ev.calName)}</span>` : "";
     const metaHtml = (evTagChip || calChip) ? `<div class="block-meta">${evTagChip}${calChip}</div>` : "";
-    html += `<div class="block event ${logged ? "logged" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" style="top:${top}px;height:${height}px;${styleBg}" title="${escapeHtml(tooltip)}">
+    html += `<div class="block event ${logged ? "logged" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" style="top:${top}px;height:${height}px;${styleBg}${colStyle}" title="${escapeHtml(tooltip)}">
       <div class="block-check ${logged ? "checked" : ""}" data-action="toggle-event-log" title="${logged ? "Unlog" : "Log for bi-weekly"}"></div>
       ${showTime ? `<div class="block-time" style="position:relative;z-index:1;">${escapeHtml(tStr)}</div>` : ""}
       <div class="block-title" style="position:relative;z-index:1;">${escapeHtml(ev.summary)}</div>
@@ -2408,6 +2460,7 @@ function renderGrid() {
     const dur = tk.estimatedMinutes || 30;
     const top = slotPx(sMins);
     const height = slotPx(dur) - 2;
+    const colStyle = colInsetStyle(layoutMap.get("t:" + tk.id));
     const tall = dur >= 45;
     const medium = dur >= 30 && dur < 45;
     const short = dur < 30;
@@ -2423,7 +2476,7 @@ function renderGrid() {
     const styleBg = customBg ? `background:${customBg};` : "";
     const tagChip = tk.tag ? `<span class="block-tag">${escapeHtml(tk.tag)}</span>` : "";
     const metaHtml = tagChip ? `<div class="block-meta">${tagChip}</div>` : "";
-    html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}">
+    html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}${colStyle}">
       <div class="block-resize" data-resize="top"></div>
       <div class="block-check" data-action="toggle-done" title="${isDone ? "Mark not done" : "Mark done"}"></div>
       ${showTime ? `<div class="block-time">${escapeHtml(tStr)}</div>` : ""}
