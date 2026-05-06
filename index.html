@@ -1,0 +1,2806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Planner</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0c;
+    --surface: #15151a;
+    --surface-2: #1d1d23;
+    --border: #2a2a30;
+    --border-strong: #3a3a42;
+    --text: #f5f3eb;
+    --text-muted: #9a9a92;
+    --text-dim: #6a6a62;
+    --accent: #fb923c;
+    --accent-strong: #f97316;
+    --accent-bg: linear-gradient(135deg, #ea580c 0%, #fb923c 100%);
+    --accent-rgb: 251, 146, 60;
+    --event: #22d3ee;
+    --event-bg: linear-gradient(135deg, #0891b2 0%, #22d3ee 100%);
+    --done: #4ade80;
+    --done-strong: #22c55e;
+    --done-bg: linear-gradient(135deg, #16a34a 0%, #4ade80 100%);
+    --overdue: #ef4444;
+    --slot-h: 16px; /* 15 min = 16px → 64px/hour */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.4;
+    font-size: 14px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 18px 18px 64px; }
+
+  /* --- Capture bar --- */
+  .capture {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    padding: 8px 0 14px;
+    z-index: 50;
+    margin-bottom: 14px;
+  }
+  .capture-input-wrap {
+    display: flex;
+    align-items: center;
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 4px 12px 4px 16px;
+    transition: all 0.15s;
+  }
+  .capture-input-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.15);
+  }
+  .capture-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 14px 0;
+    min-width: 0;
+  }
+  .capture-input:focus { outline: none; }
+  .capture-input::placeholder { color: var(--text-dim); font-weight: 400; }
+  .capture-hint {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-top: 8px;
+    padding-left: 4px;
+  }
+  .capture-hint code {
+    background: var(--surface);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  /* --- Day tabs --- */
+  .day-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 14px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .day-tab {
+    background: transparent;
+    border: 1.5px solid transparent;
+    color: var(--text-muted);
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.12s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    min-width: 64px;
+  }
+  .day-tab:hover { background: var(--surface); color: var(--text); }
+  .day-tab.active {
+    background: var(--surface);
+    color: var(--accent);
+    border-color: var(--accent-strong);
+  }
+  .day-tab .day-tab-day { font-size: 18px; font-weight: 700; line-height: 1; }
+  .day-tab .day-tab-name { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.8; }
+  .day-tab .day-tab-count {
+    font-size: 9px;
+    background: var(--accent-strong);
+    color: white;
+    padding: 1px 5px;
+    border-radius: 8px;
+    margin-top: 2px;
+    font-weight: 700;
+  }
+  .day-tab.active .day-tab-count { background: var(--accent); color: var(--bg); }
+
+  /* --- Inbox: full-width row above the grid --- */
+  .inbox-panel {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 12px 14px;
+    margin-bottom: 18px;
+  }
+  .inbox-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .inbox-head h3 {
+    margin: 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    font-weight: 700;
+  }
+  .inbox-head .inbox-count {
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .inbox-list {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .inbox-empty {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-style: italic;
+    padding: 4px 0;
+  }
+  .inbox-task {
+    background: var(--surface-2);
+    border: 1.5px solid var(--border);
+    border-left: 4px solid var(--accent-strong);
+    border-radius: 8px;
+    padding: 6px 24px 6px 10px;
+    cursor: grab;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.3;
+    transition: all 0.1s;
+    user-select: none;
+    position: relative;
+    max-width: 280px;
+  }
+  .inbox-task:hover {
+    border-color: var(--accent);
+    background: var(--surface);
+    transform: translateY(-1px);
+  }
+  .inbox-task:active { cursor: grabbing; }
+  .inbox-task.dragging { opacity: 0.5; }
+  .inbox-task .it-actions {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    opacity: 0;
+    transition: opacity 0.1s;
+    display: flex;
+    gap: 2px;
+  }
+  .inbox-task:hover .it-actions { opacity: 1; }
+  .inbox-task .it-action {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 10px;
+    line-height: 1;
+  }
+  .inbox-task .it-action:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* --- Day grid --- */
+  .day-panel {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    overflow: hidden;
+  }
+  .day-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .day-head h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .day-head .day-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* All-day strip above the grid */
+  .all-day-strip {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 0 8px;
+    margin-left: 56px;
+    border-bottom: 1px dashed var(--border);
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+  }
+  .all-day-strip:empty { display: none; }
+  .all-day-label {
+    color: var(--text-dim);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    flex-shrink: 0;
+    padding-top: 4px;
+    width: 44px;
+  }
+  .all-day-items {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .all-day-item {
+    font-size: 11px;
+    font-weight: 600;
+    color: white;
+    padding: 3px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+    cursor: default;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    text-decoration: none;
+    transition: transform 0.1s;
+  }
+  .all-day-item:hover { transform: translateY(-1px); }
+  .all-day-item.no-link { cursor: default; }
+
+  .grid-wrap {
+    position: relative;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+    overflow: hidden;
+  }
+  .grid {
+    position: relative;
+    /* height set inline via JS */
+    background:
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent calc(var(--slot-h) * 4 - 1px),
+        var(--border) calc(var(--slot-h) * 4 - 1px),
+        var(--border) calc(var(--slot-h) * 4)
+      ),
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent calc(var(--slot-h) * 2 - 1px),
+        var(--border) calc(var(--slot-h) * 2 - 1px),
+        var(--border) calc(var(--slot-h) * 2)
+      );
+    margin-left: 56px;
+  }
+  .grid.drop-over { background-color: rgba(251, 146, 60, 0.07); }
+  .hour-labels {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 56px;
+    /* height set via JS */
+  }
+  .hour-label {
+    position: absolute;
+    left: 0;
+    width: 50px;
+    text-align: right;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    padding-right: 8px;
+    line-height: 1;
+    transform: translateY(-5px);
+  }
+
+  /* --- Now line --- */
+  .now-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--accent);
+    z-index: 5;
+    pointer-events: none;
+    box-shadow: 0 0 8px rgba(251, 146, 60, 0.65);
+  }
+  .now-line::before {
+    content: "";
+    position: absolute;
+    left: -6px;
+    top: -4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(251, 146, 60, 0.85);
+  }
+
+  /* --- Blocks (tasks + events) --- */
+  .block {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.08s, box-shadow 0.08s;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    user-select: none;
+    line-height: 1.25;
+  }
+  .block:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    z-index: 4;
+  }
+  .block.task { background: var(--accent-bg); padding-right: 26px; }
+  .block.task.done {
+    background: var(--done-bg);
+    opacity: 0.92;
+  }
+  .block.task.done .block-title { text-decoration: line-through; opacity: 0.85; }
+  .block.task.overdue {
+    background: linear-gradient(135deg, #b91c1c 0%, #ef4444 100%);
+  }
+
+  /* Resize handles on task blocks */
+  .block-resize {
+    position: absolute;
+    height: 5px;
+    cursor: ns-resize;
+    z-index: 3;
+    border-radius: 2px;
+    transition: background 0.1s;
+  }
+  .block-resize.top { top: 0; left: 8px; right: 30px; } /* leave room for checkbox */
+  .block-resize.bottom { bottom: 0; left: 8px; right: 8px; }
+  .block:hover .block-resize { background: rgba(255,255,255,0.18); }
+  .block-resize:hover { background: rgba(255,255,255,0.55) !important; }
+
+  /* Drag/resize live tooltip */
+  .drag-tip {
+    position: fixed;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1.5px solid var(--accent);
+    border-radius: 6px;
+    padding: 4px 9px;
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    z-index: 200;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  }
+
+  /* One-click checkbox on task blocks */
+  .block-check {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    border: 1.5px solid rgba(255,255,255,0.55);
+    border-radius: 50%;
+    background: rgba(0,0,0,0.18);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+    z-index: 4;
+  }
+  .block-check:hover {
+    background: rgba(255,255,255,0.25);
+    border-color: rgba(255,255,255,0.95);
+  }
+  .block.short .block-check { width: 16px; height: 16px; top: 2px; right: 2px; }
+  .block.task.done .block-check,
+  .block-check.checked {
+    background: white;
+    border-color: white;
+  }
+  .block.task.done .block-check::after,
+  .block-check.checked::after {
+    content: "";
+    width: 5px;
+    height: 9px;
+    border: solid var(--done-strong);
+    border-width: 0 2.5px 2.5px 0;
+    transform: rotate(45deg);
+    margin-top: -2px;
+  }
+  .block.event {
+    background: var(--event-bg);
+    padding-right: 26px;
+  }
+  .block.event.logged { opacity: 0.85; }
+  .block.event.logged .block-title { text-decoration: line-through; opacity: 0.85; }
+  .block.event.logged::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(74,222,128,0.45) 0%, rgba(34,197,94,0.55) 100%);
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  .block .block-time {
+    font-size: 10px;
+    opacity: 0.85;
+    font-weight: 500;
+  }
+  .block .block-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .block.tall .block-time { display: block; margin-bottom: 1px; }
+  .block.medium { padding: 3px 8px; padding-right: 26px; }
+  .block.medium .block-time { display: block; font-size: 9px; line-height: 1.1; opacity: 0.85; margin-bottom: 0; }
+  .block.medium .block-title { font-size: 12px; line-height: 1.2; }
+  .block.short { padding: 2px 8px; padding-right: 22px; }
+  .block.short .block-title { font-size: 11px; }
+  .block.dragging { opacity: 0.85; outline: 2px dashed rgba(255,255,255,0.6); }
+
+  /* Ghost preview while creating a new task/event */
+  .block.ghost {
+    border: 2px dashed rgba(251,146,60,0.85);
+    background: rgba(251,146,60,0.18) !important;
+    pointer-events: none;
+    z-index: 6;
+    color: rgba(255,255,255,0.85);
+    box-shadow: 0 0 0 4px rgba(251,146,60,0.12);
+  }
+  .block.ghost.ghost-event {
+    border-color: rgba(34,211,238,0.85);
+    background: rgba(34,211,238,0.18) !important;
+    box-shadow: 0 0 0 4px rgba(34,211,238,0.12);
+  }
+  .block.ghost .block-title { font-style: italic; opacity: 0.95; }
+
+  /* Tag chip on blocks */
+  .block-tag {
+    display: inline-block;
+    background: rgba(0,0,0,0.3);
+    padding: 0 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    margin-right: 5px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+    line-height: 1.5;
+  }
+
+  /* --- Block popover --- */
+  .popover {
+    position: absolute;
+    background: var(--surface-2);
+    border: 1.5px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+    z-index: 100;
+    min-width: 240px;
+  }
+  .pop-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .pop-input {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  .pop-input:focus { outline: none; border-color: var(--accent); }
+  .pop-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .pop-btn:hover { background: var(--border); }
+  .pop-btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: white; }
+  .pop-btn.primary:hover { background: var(--accent); }
+  .pop-btn.danger { color: #ff9b8a; border-color: #4a2820; }
+  .pop-btn.danger:hover { background: #2a1814; }
+  .pop-row .dur-pick {
+    display: flex;
+    gap: 5px;
+  }
+  .pop-row .dur-pick button {
+    flex: 1;
+    background: transparent;
+    border: 1.5px solid var(--border-strong);
+    color: var(--text-muted);
+    border-radius: 8px;
+    padding: 8px 6px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    font-weight: 700;
+    transition: all 0.1s;
+  }
+  .pop-row .dur-pick button.active {
+    background: var(--accent-bg);
+    color: white;
+    border-color: white;
+    box-shadow: 0 0 0 3px rgba(251,146,60,0.35), 0 4px 14px rgba(251,146,60,0.5);
+  }
+  .pop-row .dur-pick button:hover:not(.active) {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .tag-swatch {
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #0a0a0c;
+    border: 1.5px solid transparent;
+    text-transform: lowercase;
+  }
+  .tag-swatch.active {
+    outline: 2px solid white;
+    outline-offset: 1px;
+  }
+  .tag-swatch:hover { transform: translateY(-1px); }
+
+  .mode-toggle {
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 4px 14px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .mode-toggle.active {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: white;
+  }
+  .mode-toggle:hover:not(.active) { color: var(--accent); border-color: var(--accent); }
+
+  .cal-picker-btn {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+    padding: 5px 11px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cal-picker-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .cal-picker-popover { min-width: 280px; max-height: 380px; overflow-y: auto; }
+  .cal-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .cal-row:hover { background: var(--surface); }
+  .cal-row input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 14px; height: 14px;
+    cursor: pointer;
+  }
+  .cal-row .cal-dot {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.1s, box-shadow 0.1s;
+  }
+  .cal-row .cal-dot:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.15);
+  }
+  .cal-row .color-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 14px);
+    gap: 3px;
+    flex-shrink: 0;
+    flex: 1;
+  }
+  .cal-row .color-grid button {
+    width: 14px; height: 14px;
+    border-radius: 3px;
+    border: 1.5px solid transparent;
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.08s;
+  }
+  .cal-row .color-grid button:hover { transform: scale(1.25); }
+  .cal-row .color-grid button.current {
+    border-color: white;
+    transform: scale(1.15);
+  }
+  .cal-row .cal-name {
+    flex: 1;
+    color: var(--text);
+    font-size: 13px;
+  }
+  .cal-actions {
+    display: flex;
+    gap: 6px;
+    padding: 8px 8px 4px;
+    border-top: 1px solid var(--border);
+    margin-top: 6px;
+  }
+  .cal-actions button {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .cal-actions button:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* --- Done section below grid --- */
+  .done-section {
+    margin-top: 22px;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+  }
+  details.done-disclosure summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    padding: 4px 0;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  details.done-disclosure summary::-webkit-details-marker { display: none; }
+  details.done-disclosure summary::before { content: "▸"; color: var(--text-dim); transition: transform 0.15s; display: inline-block; }
+  details.done-disclosure[open] summary::before { transform: rotate(90deg); }
+  .done-day-label {
+    color: var(--text-dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 12px 0 4px;
+    font-weight: 700;
+  }
+  .done-row {
+    display: flex;
+    gap: 8px;
+    padding: 5px 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    align-items: center;
+  }
+  .done-row .done-tick {
+    color: var(--done);
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .done-row .done-text { text-decoration: line-through; }
+  .done-row .done-when {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .done-actions { margin-top: 12px; }
+  .done-btn {
+    background: var(--accent-strong);
+    border: none;
+    color: white;
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .done-btn:hover { background: var(--accent); }
+  .done-btn.copied { background: var(--done); }
+
+  .done-filter {
+    background: var(--surface-2);
+    border: 1.5px solid var(--border);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .done-filter.active {
+    background: var(--accent-strong);
+    color: white;
+    border-color: var(--accent-strong);
+  }
+  .done-filter:hover:not(.active) { color: var(--text); border-color: var(--accent); }
+
+  .err {
+    color: #ff9b8a;
+    background: #2a1814;
+    border: 1px solid #4a2820;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+
+  .data-footer {
+    margin-top: 28px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .data-footer .data-info { line-height: 1.5; }
+  .data-footer .data-actions { display: flex; gap: 6px; }
+  .data-footer button {
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .data-footer button:hover { color: var(--accent); border-color: var(--accent); }
+  .skel {
+    height: 14px;
+    background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+    border-radius: 4px;
+    margin: 6px 0;
+  }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="capture">
+    <div class="capture-input-wrap">
+      <input class="capture-input" id="capture" placeholder="Throw something in… (e.g. 'draft Q3 update tomorrow 2pm 30m')" autocomplete="off" />
+    </div>
+    <div class="capture-hint">
+      Hit Enter to capture. Try <code>today</code>, <code>tomorrow</code>, <code>fri</code>, <code>2pm</code>, <code>14:00</code>, <code>30m</code>, <code>1h</code>, <code>#work</code>.
+    </div>
+  </div>
+
+  <div class="day-tabs" id="day-tabs"></div>
+
+  <section class="inbox-panel">
+    <div class="inbox-head">
+      <h3>Inbox</h3>
+      <span class="inbox-count" id="inbox-count">0</span>
+    </div>
+    <div class="inbox-list" id="inbox-list"></div>
+  </section>
+
+  <main class="day-panel">
+    <div class="day-head">
+      <h2 id="day-title">Today</h2>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <span class="day-meta" id="day-meta"></span>
+        <button class="cal-picker-btn" id="cal-picker-btn" title="Choose calendars">
+          <span style="font-size:14px;">📅</span>
+          <span id="cal-picker-label">Calendars</span>
+        </button>
+      </div>
+    </div>
+    <div class="all-day-strip" id="all-day-strip"></div>
+    <div class="grid-wrap">
+      <div class="hour-labels" id="hour-labels"></div>
+      <div class="grid" id="grid"></div>
+    </div>
+  </main>
+
+  <div class="done-section">
+    <details class="done-disclosure" open>
+      <summary>Done <span style="color: var(--text-dim); text-transform: none; letter-spacing: 0; font-weight: 500;" id="done-count"></span></summary>
+      <div id="done-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px;"></div>
+      <div id="done-body"></div>
+      <div class="done-actions">
+        <button class="done-btn" id="copy-done">Copy this week as bullets</button>
+        <span id="copy-done-context" style="color:var(--text-dim);font-size:11px;margin-left:10px;"></span>
+      </div>
+    </details>
+  </div>
+
+  <div class="data-footer">
+    <div class="data-info">
+      Your tasks live in this browser (localStorage) on this device only — they survive reloads and app restarts but don't sync elsewhere. Calendar refetches each open.
+    </div>
+    <div class="data-actions">
+      <button id="backup-btn">Backup</button>
+      <input type="file" id="restore-input" accept=".json" style="display:none;" />
+      <button id="restore-btn">Restore</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const STORAGE_KEY = "planner:tasks:v2";
+const STATE_KEY = "planner:state:v1";
+const TAGS_KEY = "planner:tags:v1";
+const CALS_KEY = "planner:cals:v1";
+const CAL_COLORS_KEY = "planner:cal-colors:v1";
+const LOGGED_EVENTS_KEY = "planner:logged-events:v1"; // { eventId: { summary, calName, completedAt, startIso, tag } }
+const EVENT_TAGS_KEY = "planner:event-tags:v1"; // { eventId: tagName }
+const EVENTS_CACHE_KEY = "planner:events-cache:v1"; // {events, fetchedAt, ids}
+const EVENTS_CACHE_TTL = 60 * 60 * 1000; // 1h — events still rendered from cache, but a fresh fetch always runs in background
+const SLOT_HEIGHT = 16; // px per 15 min
+
+// Calendar color palette — wide range so multiple calendars stay distinguishable
+const CAL_COLORS = [
+  // Reds & pinks
+  ["#dc2626", "#f87171"], // red
+  ["#e11d48", "#fb7185"], // rose
+  ["#db2777", "#f472b6"], // pink
+  ["#a21caf", "#e879f9"], // fuchsia
+  // Purples
+  ["#7e22ce", "#a855f7"], // purple
+  ["#7c3aed", "#a78bfa"], // violet
+  ["#4338ca", "#818cf8"], // indigo
+  // Blues
+  ["#1e40af", "#60a5fa"], // blue
+  ["#0284c7", "#38bdf8"], // sky
+  ["#0891b2", "#22d3ee"], // cyan
+  ["#155e75", "#0e7490"], // dark cyan
+  ["#0f766e", "#14b8a6"], // teal
+  // Greens
+  ["#15803d", "#4ade80"], // green
+  ["#16a34a", "#86efac"], // mint
+  ["#65a30d", "#a3e635"], // lime
+  // Warms
+  ["#a16207", "#facc15"], // gold
+  ["#b45309", "#f59e0b"], // amber
+  ["#c2410c", "#fb923c"], // orange
+  ["#9a3412", "#ea580c"], // dark orange
+  // Earth
+  ["#78350f", "#b45309"], // brown
+  ["#7c2d12", "#a16207"], // bronze
+  // Neutrals
+  ["#475569", "#94a3b8"], // slate
+  ["#525252", "#a3a3a3"], // gray
+  ["#1f2937", "#6b7280"], // dark gray
+];
+const CAL_COLOR_NAMES = [
+  "red","rose","pink","fuchsia","purple","violet","indigo",
+  "blue","sky","cyan","dark cyan","teal",
+  "green","mint","lime",
+  "gold","amber","orange","dark orange",
+  "brown","bronze","slate","gray","dark gray"
+];
+const DEFAULT_DAY_START_HOUR = 7;
+const DEFAULT_DAY_END_HOUR = 22;
+
+// Tags reuse the 24-color CAL_COLORS palette so tasks and calendars share the same range.
+function loadTags() { try { return JSON.parse(localStorage.getItem(TAGS_KEY) || "{}"); } catch { return {}; } }
+function saveTags(t) { try { localStorage.setItem(TAGS_KEY, JSON.stringify(t)); } catch {} }
+
+function getTagColorIdx(tag) {
+  if (!tag) return 0;
+  if (typeof tag.colorIdx === "number") return tag.colorIdx;
+  // Migrate from old name-based format
+  if (typeof tag.color === "string") {
+    const idx = CAL_COLOR_NAMES.indexOf(tag.color);
+    return idx >= 0 ? idx : 0;
+  }
+  return 0;
+}
+
+function ensureTag(name) {
+  const tags = loadTags();
+  if (tags[name]) return tags[name];
+  // Pick first color not yet used; if all used, cycle
+  const used = new Set(Object.values(tags).map(t => getTagColorIdx(t)));
+  let colorIdx = 0;
+  for (let i = 0; i < CAL_COLORS.length; i++) {
+    if (!used.has(i)) { colorIdx = i; break; }
+  }
+  if (used.size >= CAL_COLORS.length) colorIdx = Object.keys(tags).length % CAL_COLORS.length;
+  tags[name] = { colorIdx };
+  saveTags(tags);
+  return tags[name];
+}
+
+function setTagColor(name, colorIdx) {
+  const tags = loadTags();
+  if (!tags[name]) tags[name] = { colorIdx };
+  else tags[name].colorIdx = colorIdx;
+  saveTags(tags);
+}
+
+function tagBg(tagName) {
+  if (!tagName) return null;
+  const tags = loadTags();
+  const t = tags[tagName];
+  if (!t) return null;
+  const stops = CAL_COLORS[getTagColorIdx(t)] || CAL_COLORS[0];
+  return `linear-gradient(135deg, ${stops[0]} 0%, ${stops[1]} 100%)`;
+}
+function tagSolid(tagName) {
+  if (!tagName) return null;
+  const tags = loadTags();
+  const t = tags[tagName];
+  if (!t) return null;
+  return (CAL_COLORS[getTagColorIdx(t)] || CAL_COLORS[0])[1];
+}
+
+// ---------- helpers ----------
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function uid() { return Math.random().toString(36).slice(2, 10); }
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; } }
+function saveStore(arr) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); } catch {} }
+function loadState() { try { return JSON.parse(localStorage.getItem(STATE_KEY) || "{}"); } catch { return {}; } }
+function saveState(s) { try { localStorage.setItem(STATE_KEY, JSON.stringify(s)); } catch {} }
+function startOfDay(d = new Date()) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function fmtTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+function isSameDay(a, b) { return startOfDay(a).getTime() === startOfDay(b).getTime(); }
+function normMcp(raw) {
+  if (raw == null) return null;
+  if (raw && Array.isArray(raw.content)) {
+    const text = raw.content.filter(c => c && (c.type === "text" || typeof c.text === "string")).map(c => c.text).join("\n");
+    try { return JSON.parse(text); } catch { return text; }
+  }
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch { return raw; }
+  }
+  return raw;
+}
+function snapTo15(date) {
+  const d = new Date(date);
+  const m = d.getMinutes();
+  d.setMinutes(Math.round(m / 15) * 15, 0, 0);
+  return d;
+}
+
+function toggleTaskDone(id) {
+  const arr = loadStore();
+  const t = arr.find(x => x.id === id);
+  if (!t) return;
+  if (t.status === "done") {
+    t.status = t.scheduledFor ? "scheduled" : "inbox";
+    t.completedAt = null;
+  } else {
+    t.status = "done";
+    t.completedAt = new Date().toISOString();
+  }
+  saveStore(arr);
+  renderAll();
+}
+
+// ---------- Capture parser ----------
+const DAY_NAMES = ["sun","mon","tue","wed","thu","fri","sat"];
+const DAY_FULL = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+
+function parseCapture(text) {
+  let remaining = text.trim();
+  let scheduledDay = null;
+  let scheduledTime = null;
+  let durMin = null;
+  let tag = null;
+
+  // Tag: #word (alphanumeric, dash, underscore)
+  const tagMatch = remaining.match(/(?:^|\s)#([a-zA-Z0-9_-]+)\b/);
+  if (tagMatch) {
+    tag = tagMatch[1].toLowerCase();
+    remaining = (remaining.slice(0, tagMatch.index) + remaining.slice(tagMatch.index + tagMatch[0].length)).trim();
+  }
+
+  const durMatch = remaining.match(/(?:^|\s)(\d+(?:\.\d+)?)\s*(m|min|mins|minutes|h|hr|hrs|hours)\b/i);
+  if (durMatch) {
+    const n = parseFloat(durMatch[1]);
+    const unit = durMatch[2].toLowerCase();
+    durMin = unit.startsWith("h") ? Math.round(n * 60) : Math.round(n);
+    remaining = (remaining.slice(0, durMatch.index) + remaining.slice(durMatch.index + durMatch[0].length)).trim();
+  }
+
+  const timeMatch = remaining.match(/(?:^|\s)(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+    || remaining.match(/(?:^|\s)(\d{1,2}):(\d{2})\b/);
+  if (timeMatch) {
+    let h = parseInt(timeMatch[1], 10);
+    const m = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+    const ampm = timeMatch[3] ? timeMatch[3].toLowerCase() : null;
+    if (ampm === "pm" && h < 12) h += 12;
+    if (ampm === "am" && h === 12) h = 0;
+    if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+      scheduledTime = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+      remaining = (remaining.slice(0, timeMatch.index) + remaining.slice(timeMatch.index + timeMatch[0].length)).trim();
+    }
+  }
+
+  const today = startOfDay();
+  const todayMatch = remaining.match(/(?:^|\s)(today|tod)\b/i);
+  if (todayMatch) {
+    scheduledDay = today;
+    remaining = (remaining.slice(0, todayMatch.index) + remaining.slice(todayMatch.index + todayMatch[0].length)).trim();
+  }
+  if (!scheduledDay) {
+    const tomMatch = remaining.match(/(?:^|\s)(tomorrow|tom|tmrw)\b/i);
+    if (tomMatch) {
+      scheduledDay = addDays(today, 1);
+      remaining = (remaining.slice(0, tomMatch.index) + remaining.slice(tomMatch.index + tomMatch[0].length)).trim();
+    }
+  }
+  if (!scheduledDay) {
+    for (let i = 0; i < 7; i++) {
+      const re = new RegExp(`(?:^|\\s)(${DAY_FULL[i]}|${DAY_NAMES[i]})\\b`, "i");
+      const m = remaining.match(re);
+      if (m) {
+        const todayDow = today.getDay();
+        let delta = (i - todayDow + 7) % 7;
+        if (delta === 0) delta = 7;
+        scheduledDay = addDays(today, delta);
+        remaining = (remaining.slice(0, m.index) + remaining.slice(m.index + m[0].length)).trim();
+        break;
+      }
+    }
+  }
+
+  let scheduledFor = null;
+  if (scheduledDay) {
+    const d = new Date(scheduledDay);
+    if (scheduledTime) { const [h, mi] = scheduledTime.split(":").map(Number); d.setHours(h, mi, 0, 0); }
+    scheduledFor = d.toISOString();
+  } else if (scheduledTime) {
+    const d = new Date();
+    const [h, mi] = scheduledTime.split(":").map(Number);
+    d.setHours(h, mi, 0, 0);
+    scheduledFor = d.toISOString();
+  }
+  remaining = remaining.replace(/\s+/g, " ").trim();
+  return { text: remaining, scheduledFor, estimatedMinutes: durMin, tag };
+}
+
+// ---------- State ----------
+let state = Object.assign({ activeDayOffset: 0 }, loadState());
+let calendarEvents = [];
+let availableCalendars = []; // [{id, summary, timeZone, colorIdx}]
+
+function loadSelectedCalIds() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CALS_KEY) || "null");
+    return arr ? new Set(arr) : null; // null = use default (primary only)
+  } catch { return null; }
+}
+function saveSelectedCalIds(set) {
+  try { localStorage.setItem(CALS_KEY, JSON.stringify([...set])); } catch {}
+}
+function loadCalColorOverrides() {
+  try { return JSON.parse(localStorage.getItem(CAL_COLORS_KEY) || "{}"); } catch { return {}; }
+}
+function saveCalColorOverride(calId, idx) {
+  const o = loadCalColorOverrides();
+  o[calId] = idx;
+  try { localStorage.setItem(CAL_COLORS_KEY, JSON.stringify(o)); } catch {}
+}
+function loadLoggedEvents() {
+  try { return JSON.parse(localStorage.getItem(LOGGED_EVENTS_KEY) || "{}"); } catch { return {}; }
+}
+function saveLoggedEvents(o) {
+  try { localStorage.setItem(LOGGED_EVENTS_KEY, JSON.stringify(o)); } catch {}
+}
+function isEventLogged(evId) { return !!loadLoggedEvents()[evId]; }
+function toggleEventLog(ev) {
+  const log = loadLoggedEvents();
+  if (log[ev.id]) {
+    delete log[ev.id];
+  } else {
+    log[ev.id] = {
+      summary: ev.summary,
+      calName: ev.calName || "",
+      completedAt: new Date().toISOString(),
+      startIso: ev.startIso,
+      tag: getEventTag(ev.id) || null,
+    };
+  }
+  saveLoggedEvents(log);
+}
+function loadEventTags() {
+  try { return JSON.parse(localStorage.getItem(EVENT_TAGS_KEY) || "{}"); } catch { return {}; }
+}
+function saveEventTags(o) {
+  try { localStorage.setItem(EVENT_TAGS_KEY, JSON.stringify(o)); } catch {}
+}
+function getEventTag(evId) { return loadEventTags()[evId] || null; }
+function setEventTag(evId, tag) {
+  const o = loadEventTags();
+  if (tag) o[evId] = tag; else delete o[evId];
+  saveEventTags(o);
+  // Also keep the logged-events copy in sync
+  const log = loadLoggedEvents();
+  if (log[evId]) { log[evId].tag = tag || null; saveLoggedEvents(log); }
+}
+
+// ---------- Calendar list + events fetch ----------
+let calListState = "idle"; // "idle" | "loading" | "loaded" | "error"
+let calListError = null;
+let calListRawDebug = null; // last raw response, kept for the error alert
+
+async function loadCalendarList() {
+  calListState = "loading";
+  calListError = null;
+  updateCalPickerLabel();
+  try {
+    const raw = await window.cowork.callMcpTool(
+      "mcp__3a0189ff-940c-477d-967e-015cea265140__list_calendars",
+      { pageSize: 100 }
+    );
+    calListRawDebug = raw;
+    console.log("[planner] list_calendars raw:", raw);
+    const data = normMcp(raw);
+    console.log("[planner] list_calendars normalized:", data);
+    // Try multiple possible shapes — vendor wrappers vary
+    let cals = null;
+    if (data) {
+      if (Array.isArray(data.calendars)) cals = data.calendars;
+      else if (Array.isArray(data.items)) cals = data.items;
+      else if (Array.isArray(data)) cals = data;
+      else if (data.result && Array.isArray(data.result.calendars)) cals = data.result.calendars;
+      else if (data.data && Array.isArray(data.data.calendars)) cals = data.data.calendars;
+    }
+    if (!cals) cals = [];
+    if (!cals.length) {
+      console.warn("[planner] list_calendars returned 0 calendars; raw was:", JSON.stringify(raw).slice(0, 600));
+    }
+    cals.sort((a, b) => (a.summary || a.summaryOverride || "").localeCompare(b.summary || b.summaryOverride || ""));
+    const overrides = loadCalColorOverrides();
+    availableCalendars = cals.map((c, i) => ({
+      id: c.id,
+      summary: c.summary || c.summaryOverride || c.id,
+      timeZone: c.timeZone,
+      colorIdx: overrides[c.id] != null ? overrides[c.id] : (i % CAL_COLORS.length),
+    }));
+    calListState = "loaded";
+  } catch (e) {
+    console.warn("[planner] list_calendars failed", e);
+    calListError = e && e.message ? e.message : String(e);
+    calListState = "error";
+    availableCalendars = [];
+  }
+  updateCalPickerLabel();
+}
+
+function loadEventsFromCache() {
+  try {
+    const data = JSON.parse(localStorage.getItem(EVENTS_CACHE_KEY) || "null");
+    if (!data || !Array.isArray(data.events)) return null;
+    return data;
+  } catch { return null; }
+}
+function saveEventsToCache(events, ids) {
+  try {
+    localStorage.setItem(EVENTS_CACHE_KEY, JSON.stringify({
+      events, fetchedAt: Date.now(), ids,
+    }));
+  } catch {}
+}
+function refreshColorIdxFromAvailable() {
+  // Re-resolve event colorIdx using current availableCalendars (so live color edits apply
+  // to events restored from cache).
+  if (!availableCalendars.length) return;
+  for (const ev of calendarEvents) {
+    const cal = availableCalendars.find(c => c.id === ev.calId);
+    if (cal) ev.colorIdx = cal.colorIdx;
+  }
+}
+
+async function loadCalendar() {
+  const start = startOfDay();
+  const end = addDays(start, 14);
+  // Determine which calendar IDs to fetch
+  const sel = loadSelectedCalIds();
+  let ids;
+  if (sel === null) {
+    // Default: just primary
+    ids = [null];
+  } else {
+    ids = [...sel];
+    if (!ids.length) ids = [null]; // user deselected everything → fall back to primary
+  }
+  const all = [];
+  await Promise.all(ids.map(async (calId) => {
+    try {
+      const params = { startTime: start.toISOString(), endTime: end.toISOString(), orderBy: "startTime", pageSize: 200 };
+      if (calId) params.calendarId = calId;
+      const raw = await window.cowork.callMcpTool(
+        "mcp__3a0189ff-940c-477d-967e-015cea265140__list_events", params
+      );
+      const data = normMcp(raw);
+      const events = (data && data.events) || [];
+      const cal = availableCalendars.find(c => c.id === calId);
+      const colorIdx = cal ? cal.colorIdx : 0;
+      const calName = cal ? cal.summary : "Primary";
+      for (const ev of events) {
+        if (!ev.start) continue;
+        const isAllDay = !ev.start.dateTime && !!ev.start.date;
+        if (!ev.start.dateTime && !ev.start.date) continue;
+        const startIso = ev.start.dateTime || (ev.start.date + "T00:00:00");
+        const endIso = ev.end ? (ev.end.dateTime || (ev.end.date + "T00:00:00")) : startIso;
+        // Stable id: prefer Google's id; fallback to composite if missing
+        const evId = ev.id || `${calId || "primary"}::${startIso}::${ev.summary || ""}`;
+        all.push({
+          id: evId,
+          startIso, endIso,
+          summary: ev.summary || "(no title)",
+          url: ev.htmlLink || "",
+          calId, calName, colorIdx,
+          allDay: isAllDay,
+        });
+      }
+    } catch (e) {
+      console.warn("[planner] events fetch failed for", calId, e);
+    }
+  }));
+  calendarEvents = all;
+  // Persist to cache for next-session instant render
+  saveEventsToCache(all, ids);
+}
+
+function eventsForDay(date) {
+  const dayStart = startOfDay(date).getTime();
+  const dayEnd = dayStart + 86400000;
+  return calendarEvents.filter(ev => {
+    if (ev.allDay) return false;
+    const s = new Date(ev.startIso).getTime();
+    return s >= dayStart && s < dayEnd;
+  });
+}
+
+function allDayEventsForDay(date) {
+  const d = startOfDay(date).getTime();
+  return calendarEvents.filter(ev => {
+    if (!ev.allDay) return false;
+    const s = startOfDay(new Date(ev.startIso)).getTime();
+    const e = startOfDay(new Date(ev.endIso)).getTime();
+    // GCal end.date is exclusive; if start == end, treat single-day inclusive
+    return d >= s && (d < e || s === e);
+  });
+}
+
+function tasksForDay(date) {
+  const tasks = loadStore();
+  const dayStart = startOfDay(date).getTime();
+  const dayEnd = dayStart + 86400000;
+  return tasks.filter(t => {
+    if (!t.scheduledFor) return false;
+    const s = new Date(t.scheduledFor).getTime();
+    return s >= dayStart && s < dayEnd;
+  });
+}
+
+// ---------- Render: day tabs ----------
+function renderDayTabs() {
+  const el = document.getElementById("day-tabs");
+  const today = startOfDay();
+  const tabs = [];
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(today, i);
+    const dayTasks = tasksForDay(d).filter(t => t.status !== "done");
+    const isActive = i === state.activeDayOffset;
+    const dayLabel = i === 0 ? "Today" : i === 1 ? "Tomorrow" : d.toLocaleDateString([], { weekday: "short" });
+    tabs.push(`<button class="day-tab ${isActive ? "active" : ""}" data-offset="${i}">
+      <span class="day-tab-name">${escapeHtml(dayLabel)}</span>
+      <span class="day-tab-day">${d.getDate()}</span>
+      ${dayTasks.length ? `<span class="day-tab-count">${dayTasks.length}</span>` : ""}
+    </button>`);
+  }
+  el.innerHTML = tabs.join("");
+  el.querySelectorAll(".day-tab").forEach(t => {
+    t.addEventListener("click", () => {
+      state.activeDayOffset = parseInt(t.dataset.offset, 10);
+      saveState(state);
+      renderDayTabs();
+      renderGrid();
+    });
+  });
+}
+
+// ---------- Render: inbox ----------
+function renderInbox() {
+  const tasks = loadStore().filter(t => t.status !== "done" && !t.scheduledFor)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const el = document.getElementById("inbox-list");
+  document.getElementById("inbox-count").textContent = tasks.length;
+  if (!tasks.length) {
+    el.innerHTML = '<div class="inbox-empty">Empty. Throw something in via the capture bar above ↑</div>';
+    return;
+  }
+  el.innerHTML = tasks.map(t => {
+    const borderColor = tagSolid(t.tag) || "var(--accent-strong)";
+    const tagChip = t.tag ? `<span class="block-tag" style="background:${tagSolid(t.tag)};color:#0a0a0c;">${escapeHtml(t.tag)}</span>` : "";
+    return `<div class="inbox-task" draggable="true" data-id="${t.id}" style="border-left-color:${borderColor};">
+      <div>${tagChip}${escapeHtml(t.text)}</div>
+      ${t.estimatedMinutes ? `<div style="margin-top:3px;font-size:10px;color:var(--text-dim);font-weight:500;">${t.estimatedMinutes}m</div>` : ""}
+      <div class="it-actions">
+        <button class="it-action" data-action="del" title="Delete">×</button>
+      </div>
+    </div>`;
+  }).join("");
+  // Wire handlers
+  el.querySelectorAll(".inbox-task").forEach(item => {
+    const id = item.dataset.id;
+    item.addEventListener("dragstart", (e) => {
+      item.classList.add("dragging");
+      e.dataTransfer.setData("text/plain", id);
+      e.dataTransfer.effectAllowed = "move";
+    });
+    item.addEventListener("dragend", () => item.classList.remove("dragging"));
+    item.addEventListener("click", (e) => {
+      if (e.target.dataset.action === "del") return;
+      // Schedule for the active day at a default time
+      scheduleTaskQuick(id);
+    });
+    item.querySelector("[data-action='del']").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const arr = loadStore().filter(x => x.id !== id);
+      saveStore(arr);
+      renderAll();
+    });
+  });
+}
+
+function scheduleTaskQuick(id) {
+  const arr = loadStore();
+  const t = arr.find(x => x.id === id);
+  if (!t) return;
+  // Pick an empty slot starting at 9am on the active day
+  const day = addDays(startOfDay(), state.activeDayOffset);
+  day.setHours(9, 0, 0, 0);
+  t.scheduledFor = day.toISOString();
+  t.status = "scheduled";
+  saveStore(arr);
+  renderAll();
+}
+
+// ---------- Render: grid ----------
+function getDayBounds(date) {
+  // Determine grid extent: pad to fit any events outside default range
+  let startHour = DEFAULT_DAY_START_HOUR;
+  let endHour = DEFAULT_DAY_END_HOUR;
+  const events = eventsForDay(date);
+  const tasks = tasksForDay(date);
+  for (const ev of events) {
+    const s = new Date(ev.startIso);
+    const e = new Date(ev.endIso);
+    startHour = Math.min(startHour, s.getHours());
+    endHour = Math.max(endHour, Math.ceil(e.getHours() + e.getMinutes()/60));
+  }
+  for (const tk of tasks) {
+    const s = new Date(tk.scheduledFor);
+    const dur = tk.estimatedMinutes || 30;
+    const eMins = s.getHours() * 60 + s.getMinutes() + dur;
+    startHour = Math.min(startHour, s.getHours());
+    endHour = Math.max(endHour, Math.ceil(eMins / 60));
+  }
+  return { startHour: Math.max(0, startHour), endHour: Math.min(24, endHour + 1) };
+}
+
+function renderGrid() {
+  const offset = state.activeDayOffset || 0;
+  const day = addDays(startOfDay(), offset);
+  const dayLabel = offset === 0 ? "Today" : offset === 1 ? "Tomorrow"
+    : day.toLocaleDateString([], { weekday: "long" });
+  document.getElementById("day-title").textContent = `${dayLabel} · ${day.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}`;
+
+  // All-day strip
+  const allDayEvents = allDayEventsForDay(day);
+  const allDayHost = document.getElementById("all-day-strip");
+  if (allDayEvents.length) {
+    const items = allDayEvents.map(ev => {
+      const stops = CAL_COLORS[ev.colorIdx || 0];
+      const bg = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+      const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}`;
+      const inner = `${escapeHtml(ev.summary)}`;
+      return ev.url
+        ? `<a class="all-day-item" href="${escapeHtml(ev.url)}" target="_blank" rel="noopener" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</a>`
+        : `<span class="all-day-item no-link" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</span>`;
+    }).join("");
+    allDayHost.innerHTML = `<div class="all-day-label">all day</div><div class="all-day-items">${items}</div>`;
+  } else {
+    allDayHost.innerHTML = "";
+  }
+
+  const bounds = getDayBounds(day);
+  const totalMins = (bounds.endHour - bounds.startHour) * 60;
+  const totalSlots = totalMins / 15;
+  const gridHeight = totalSlots * SLOT_HEIGHT;
+
+  // Hour labels
+  const labelsEl = document.getElementById("hour-labels");
+  labelsEl.style.height = gridHeight + "px";
+  let labelHtml = "";
+  for (let h = bounds.startHour; h <= bounds.endHour; h++) {
+    const top = (h - bounds.startHour) * 4 * SLOT_HEIGHT;
+    labelHtml += `<div class="hour-label" style="top:${top}px;">${String(h).padStart(2,"0")}:00</div>`;
+  }
+  labelsEl.innerHTML = labelHtml;
+
+  // Grid blocks
+  const gridEl = document.getElementById("grid");
+  gridEl.style.height = gridHeight + "px";
+  const events = eventsForDay(day);
+  const tasks = tasksForDay(day);
+
+  const minsFromStart = (iso) => {
+    const d = new Date(iso);
+    return (d.getHours() * 60 + d.getMinutes()) - bounds.startHour * 60;
+  };
+  const slotPx = (mins) => Math.max(0, mins / 15) * SLOT_HEIGHT;
+
+  let html = "";
+
+  // Now line (only for today)
+  if (offset === 0) {
+    const now = new Date();
+    const nowMins = now.getHours() * 60 + now.getMinutes() - bounds.startHour * 60;
+    if (nowMins >= 0 && nowMins <= totalMins) {
+      html += `<div class="now-line" style="top:${slotPx(nowMins)}px;"></div>`;
+    }
+  }
+
+  // Events
+  for (const ev of events) {
+    const sMins = minsFromStart(ev.startIso);
+    const eMins = minsFromStart(ev.endIso);
+    const dur = Math.max(15, eMins - sMins);
+    const top = slotPx(sMins);
+    const height = slotPx(dur) - 2;
+    const tall = dur >= 45;
+    const medium = dur >= 30 && dur < 45;
+    const short = dur < 30;
+    const showTime = dur >= 30;
+    const tStr = `${fmtTime(ev.startIso)}–${fmtTime(ev.endIso)}`;
+    // Tag color overrides calendar color when an event has a tag
+    const evTag = getEventTag(ev.id);
+    const tagBackground = evTag ? tagBg(evTag) : null;
+    const stops = CAL_COLORS[ev.colorIdx || 0];
+    const baseBg = tagBackground || `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+    const styleBg = `background:${baseBg};`;
+    const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}  (${tStr})${evTag ? "  •  #" + evTag : ""}`;
+    const logged = isEventLogged(ev.id);
+    const evTagChip = evTag ? `<span class="block-tag">${escapeHtml(evTag)}</span>` : "";
+    html += `<div class="block event ${logged ? "logged" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" style="top:${top}px;height:${height}px;${styleBg}" title="${escapeHtml(tooltip)}">
+      <div class="block-check ${logged ? "checked" : ""}" data-action="toggle-event-log" title="${logged ? "Unlog" : "Log for bi-weekly"}"></div>
+      ${showTime ? `<div class="block-time" style="position:relative;z-index:1;">${escapeHtml(tStr)}</div>` : ""}
+      <div class="block-title" style="position:relative;z-index:1;">${evTagChip}${escapeHtml(ev.summary)}</div>
+    </div>`;
+  }
+
+  // Tasks
+  for (const tk of tasks) {
+    const sMins = minsFromStart(tk.scheduledFor);
+    const dur = tk.estimatedMinutes || 30;
+    const top = slotPx(sMins);
+    const height = slotPx(dur) - 2;
+    const tall = dur >= 45;
+    const medium = dur >= 30 && dur < 45;
+    const short = dur < 30;
+    const showTime = dur >= 30;
+    const isDone = tk.status === "done";
+    const overdue = !isDone && new Date(tk.scheduledFor) < new Date() && offset === 0;
+    const startMs = new Date(tk.scheduledFor).getTime();
+    const endMs = startMs + dur * 60000;
+    const tStr = `${fmtTime(tk.scheduledFor)}–${fmtTime(new Date(endMs).toISOString())}`;
+    // Tag color overrides default orange (unless done/overdue, which keep their semantic colors)
+    const customBg = (!isDone && !overdue) ? tagBg(tk.tag) : null;
+    const styleBg = customBg ? `background:${customBg};` : "";
+    const tagChip = tk.tag ? `<span class="block-tag">${escapeHtml(tk.tag)}</span>` : "";
+    html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}">
+      <div class="block-resize" data-resize="top"></div>
+      <div class="block-check" data-action="toggle-done" title="${isDone ? "Mark not done" : "Mark done"}"></div>
+      ${showTime ? `<div class="block-time">${escapeHtml(tStr)}</div>` : ""}
+      <div class="block-title">${tagChip}${escapeHtml(tk.text)}</div>
+      <div class="block-resize" data-resize="bottom"></div>
+    </div>`;
+  }
+
+  gridEl.innerHTML = html;
+  document.getElementById("day-meta").textContent = `${tasks.length} task${tasks.length === 1 ? "" : "s"} · ${events.length} event${events.length === 1 ? "" : "s"}`;
+
+  // Wire event-block log checkboxes + click-to-edit
+  gridEl.querySelectorAll(".block.event").forEach(b => {
+    const check = b.querySelector("[data-action='toggle-event-log']");
+    if (check) {
+      check.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const evId = b.dataset.eventId;
+        const ev = calendarEvents.find(x => x.id === evId);
+        if (!ev) return;
+        toggleEventLog(ev);
+        renderGrid();
+        renderDone();
+      });
+    }
+    b.addEventListener("click", (e) => {
+      // Ignore clicks on the checkbox
+      if (e.target.closest("[data-action='toggle-event-log']")) return;
+      e.stopPropagation();
+      const evId = b.dataset.eventId;
+      const ev = calendarEvents.find(x => x.id === evId);
+      if (!ev) return;
+      openEventPopover(b, ev);
+    });
+  });
+  // Wire per-block handlers (recreated each render — fine, the elements are new)
+  gridEl.querySelectorAll(".block.task").forEach(b => {
+    b.addEventListener("click", (e) => {
+      if (suppressNextClick) return;
+      e.stopPropagation();
+      if (e.target.closest("[data-action='toggle-done']")) {
+        toggleTaskDone(b.dataset.id);
+        return;
+      }
+      if (e.target.closest("[data-resize]")) return; // resize handles handle their own
+      openTaskPopover(b, b.dataset.id);
+    });
+    b.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest("[data-action='toggle-done']")) return;
+      let kind = "move";
+      if (e.target.closest("[data-resize='top']")) kind = "resize-top";
+      else if (e.target.closest("[data-resize='bottom']")) kind = "resize-bottom";
+      startBlockDrag(e, b, kind);
+    });
+  });
+  // Save grid context for persistent listeners
+  gridEl._dayCtx = { day, startHour: bounds.startHour };
+}
+
+// ---------- Mouse-based drag/resize for blocks ----------
+let pendingDrag = null;
+let suppressNextClick = false;
+let dragTip = null;
+
+function ensureDragTip() {
+  if (!dragTip) {
+    dragTip = document.createElement("div");
+    dragTip.className = "drag-tip";
+    document.body.appendChild(dragTip);
+  }
+  return dragTip;
+}
+function hideDragTip() { if (dragTip) { dragTip.remove(); dragTip = null; } }
+
+function startBlockDrag(e, block, kind) {
+  e.preventDefault();
+  e.stopPropagation();
+  pendingDrag = {
+    kind, // "move" | "resize-top" | "resize-bottom"
+    block,
+    startX: e.clientX,
+    startY: e.clientY,
+    moved: false,
+  };
+}
+
+function onBlockMouseMove(e) {
+  if (!pendingDrag) return;
+  const dx = e.clientX - pendingDrag.startX;
+  const dy = e.clientY - pendingDrag.startY;
+  if (!pendingDrag.moved) {
+    if (Math.abs(dx) + Math.abs(dy) < 4) return; // small movement = treated as click
+    pendingDrag.moved = true;
+    pendingDrag.originalTop = parseInt(pendingDrag.block.style.top, 10) || 0;
+    pendingDrag.originalHeight = parseInt(pendingDrag.block.style.height, 10) || (SLOT_HEIGHT * 2);
+    pendingDrag.block.classList.add("dragging");
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = pendingDrag.kind === "move" ? "grabbing" : "ns-resize";
+  }
+  // Snap delta to 30 min (= 2 slots = 32px)
+  const snapPx = SLOT_HEIGHT * 2;
+  const snappedDy = Math.round(dy / snapPx) * snapPx;
+  const ctx = document.getElementById("grid")._dayCtx;
+  if (!ctx) return;
+  let liveTopMin, liveDurMin;
+
+  if (pendingDrag.kind === "move") {
+    const newTop = Math.max(0, pendingDrag.originalTop + snappedDy);
+    pendingDrag.block.style.top = newTop + "px";
+    liveTopMin = ctx.startHour * 60 + (newTop / SLOT_HEIGHT) * 15;
+    liveDurMin = (pendingDrag.originalHeight + 2) / SLOT_HEIGHT * 15;
+  } else if (pendingDrag.kind === "resize-bottom") {
+    const newHeight = Math.max(SLOT_HEIGHT, pendingDrag.originalHeight + snappedDy);
+    pendingDrag.block.style.height = newHeight + "px";
+    liveTopMin = ctx.startHour * 60 + (pendingDrag.originalTop / SLOT_HEIGHT) * 15;
+    liveDurMin = Math.round((newHeight + 2) / SLOT_HEIGHT) * 15;
+  } else if (pendingDrag.kind === "resize-top") {
+    const newHeight = pendingDrag.originalHeight - snappedDy;
+    if (newHeight < SLOT_HEIGHT) return;
+    const newTop = Math.max(0, pendingDrag.originalTop + snappedDy);
+    pendingDrag.block.style.top = newTop + "px";
+    pendingDrag.block.style.height = newHeight + "px";
+    liveTopMin = ctx.startHour * 60 + (newTop / SLOT_HEIGHT) * 15;
+    liveDurMin = Math.round((newHeight + 2) / SLOT_HEIGHT) * 15;
+  }
+
+  // Live tooltip showing current snapped time/duration
+  const tip = ensureDragTip();
+  const startD = new Date(ctx.day);
+  startD.setHours(0,0,0,0);
+  startD.setMinutes(liveTopMin);
+  const endD = new Date(startD.getTime() + liveDurMin * 60000);
+  tip.textContent = `${fmtTime(startD.toISOString())}–${fmtTime(endD.toISOString())}  ·  ${liveDurMin}m`;
+  tip.style.left = (e.clientX + 14) + "px";
+  tip.style.top = (e.clientY + 14) + "px";
+}
+
+function onBlockMouseUp(e) {
+  if (!pendingDrag) return;
+  const p = pendingDrag;
+  pendingDrag = null;
+  hideDragTip();
+  if (!p.moved) return; // treat as click
+
+  document.body.style.userSelect = "";
+  document.body.style.cursor = "";
+  p.block.classList.remove("dragging");
+  suppressNextClick = true;
+  setTimeout(() => suppressNextClick = false, 100);
+
+  const ctx = document.getElementById("grid")._dayCtx;
+  if (!ctx) return;
+  const arr = loadStore();
+  const t = arr.find(x => x.id === p.block.dataset.id);
+  if (!t) return;
+
+  const newTop = parseInt(p.block.style.top, 10);
+  const newHeight = parseInt(p.block.style.height, 10);
+
+  if (p.kind === "move" || p.kind === "resize-top") {
+    const minutesFromGridStart = (newTop / SLOT_HEIGHT) * 15;
+    const totalMins = ctx.startHour * 60 + minutesFromGridStart;
+    const newStart = new Date(ctx.day);
+    newStart.setHours(0,0,0,0);
+    newStart.setMinutes(totalMins);
+    t.scheduledFor = newStart.toISOString();
+  }
+  if (p.kind === "resize-top" || p.kind === "resize-bottom") {
+    const newDur = Math.round((newHeight + 2) / SLOT_HEIGHT) * 15;
+    t.estimatedMinutes = Math.max(15, newDur);
+  }
+  saveStore(arr);
+  renderAll();
+}
+
+document.addEventListener("mousemove", onBlockMouseMove);
+document.addEventListener("mouseup", onBlockMouseUp);
+
+// ---------- Grid-level listeners (attached once) ----------
+function wireGridListeners() {
+  const gridEl = document.getElementById("grid");
+  gridEl.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    gridEl.classList.add("drop-over");
+  });
+  gridEl.addEventListener("dragleave", (e) => {
+    if (e.target === gridEl) gridEl.classList.remove("drop-over");
+  });
+  gridEl.addEventListener("drop", (e) => {
+    e.preventDefault();
+    gridEl.classList.remove("drop-over");
+    const id = e.dataTransfer.getData("text/plain");
+    if (!id) return;
+    const ctx = gridEl._dayCtx;
+    if (!ctx) return;
+    const rect = gridEl.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    // Drop snaps to nearest 30 min (slots are 15-min, so round to even index × 15)
+    const rawMins = ctx.startHour * 60 + (y / SLOT_HEIGHT) * 15;
+    const dropMins = Math.max(0, Math.round(rawMins / 30) * 30);
+    const dropTime = new Date(ctx.day);
+    dropTime.setHours(0, 0, 0, 0);
+    dropTime.setMinutes(dropMins);
+    const arr = loadStore();
+    const t = arr.find(x => x.id === id);
+    if (!t) return;
+    t.scheduledFor = dropTime.toISOString();
+    t.status = "scheduled";
+    saveStore(arr);
+    renderAll();
+  });
+  gridEl.addEventListener("click", (e) => {
+    if (e.target !== gridEl) return;
+    const ctx = gridEl._dayCtx;
+    if (!ctx) return;
+    const rect = gridEl.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const slotIdx = Math.max(0, Math.floor(y / SLOT_HEIGHT));
+    const clickMins = ctx.startHour * 60 + slotIdx * 15;
+    const clickTime = new Date(ctx.day);
+    clickTime.setHours(0, 0, 0, 0);
+    clickTime.setMinutes(clickMins);
+    openNewTaskPopover(e.clientX, e.clientY, clickTime);
+  });
+}
+
+// ---------- Popovers ----------
+let activePopover = null;
+let popoverOnClose = null;
+function closePopover() {
+  if (popoverOnClose) { try { popoverOnClose(); } catch {} popoverOnClose = null; }
+  if (activePopover) { activePopover.remove(); activePopover = null; }
+  document.removeEventListener("mousedown", onDocClick);
+}
+function onDocClick(e) {
+  if (activePopover && !activePopover.contains(e.target)) closePopover();
+}
+
+function tagSelectorHtml(currentTag) {
+  const tags = loadTags();
+  const names = Object.keys(tags).sort();
+  const swatches = names.map(name => {
+    const c = tagSolid(name);
+    const isActive = name === currentTag;
+    return `<button class="tag-swatch ${isActive ? "active" : ""}" data-tag="${escapeHtml(name)}" style="background:${c};" title="${escapeHtml(name)} — click to select; click again to recolor">${escapeHtml(name)}</button>`;
+  }).join("");
+  return `
+    <div class="pop-row" style="flex-wrap:wrap;gap:5px;">
+      <button class="tag-swatch ${!currentTag ? "active" : ""}" data-tag="" style="background:transparent;border:1px dashed var(--border-strong);color:var(--text-muted);">none</button>
+      ${swatches}
+      <button class="tag-swatch newtag" data-tag="__new" style="background:transparent;border:1px dashed var(--accent);color:var(--accent);">+ new</button>
+    </div>`;
+}
+
+function wireTagSelector(pop, taskOrNew, onChange) {
+  pop.querySelectorAll(".tag-swatch").forEach(b => {
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const val = b.dataset.tag;
+      if (val === "__new") {
+        // Inline input (prompt() is blocked in sandboxed iframes)
+        showInlineNewTag(b, onChange);
+        return;
+      }
+      // Click on the already-active tag swatch → open inline color picker
+      if (val && b.classList.contains("active")) {
+        showTagColorPicker(b, val, onChange);
+        return;
+      }
+      onChange(val || null);
+    });
+  });
+}
+
+function showInlineNewTag(anchorBtn, onChange) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "tag name…";
+  input.maxLength = 20;
+  input.style.cssText = "background:var(--surface);border:1.5px solid var(--accent);color:var(--text);border-radius:999px;padding:3px 10px;font-family:inherit;font-size:11px;font-weight:700;width:120px;outline:none;";
+  anchorBtn.replaceWith(input);
+  setTimeout(() => input.focus(), 0);
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    const clean = (input.value || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 20);
+    if (clean) {
+      ensureTag(clean);
+      onChange(clean);
+    } else {
+      // Restore the "+ new" button if cancelled
+      input.replaceWith(anchorBtn);
+    }
+  };
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    input.replaceWith(anchorBtn);
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener("blur", () => {
+    // Tiny delay so click on a swatch can take effect first
+    setTimeout(commit, 50);
+  });
+}
+
+function showTagColorPicker(anchorBtn, tagName, onChange) {
+  // Reuse the cal-color popover style — show a 24-swatch grid
+  const tags = loadTags();
+  const tag = tags[tagName];
+  if (!tag) return;
+  const currentIdx = getTagColorIdx(tag);
+  const html = `
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);font-weight:700;padding:0 0 6px;">Color for #${escapeHtml(tagName)}</div>
+    <div class="color-grid" style="display:grid;grid-template-columns:repeat(8,16px);gap:4px;">
+      ${CAL_COLORS.map((stops, i) => {
+        const bg = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+        return `<button type="button" class="${i === currentIdx ? "current" : ""}" data-idx="${i}" style="background:${bg};width:16px;height:16px;border-radius:3px;border:1.5px solid transparent;cursor:pointer;padding:0;${i === currentIdx ? "border-color:white;transform:scale(1.15);" : ""}" title="${escapeHtml(CAL_COLOR_NAMES[i] || "")}"></button>`;
+      }).join("")}
+    </div>`;
+  // Replace the active tag swatch element with this picker temporarily
+  const wrap = document.createElement("div");
+  wrap.style.padding = "8px 10px";
+  wrap.style.background = "var(--surface-2)";
+  wrap.style.border = "1px solid var(--border-strong)";
+  wrap.style.borderRadius = "8px";
+  wrap.style.marginTop = "4px";
+  wrap.innerHTML = html;
+  anchorBtn.parentNode.insertBefore(wrap, anchorBtn.nextSibling);
+  wrap.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const idx = parseInt(b.dataset.idx, 10);
+      setTagColor(tagName, idx);
+      wrap.remove();
+      onChange(tagName); // re-render with new color (stays selected)
+    });
+  });
+  // Auto-dismiss when user clicks elsewhere in the popover
+  setTimeout(() => {
+    const dismiss = (ev) => {
+      if (!wrap.contains(ev.target)) {
+        wrap.remove();
+        document.removeEventListener("mousedown", dismiss);
+      }
+    };
+    document.addEventListener("mousedown", dismiss);
+  }, 0);
+}
+
+function showPopover(html, anchorX, anchorY) {
+  closePopover();
+  const pop = document.createElement("div");
+  pop.className = "popover";
+  pop.innerHTML = html;
+  document.body.appendChild(pop);
+  // Position: try below-right of anchor, clamp to viewport
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  let x = anchorX + 8, y = anchorY + 8;
+  if (x + w > window.innerWidth - 8) x = window.innerWidth - w - 8;
+  if (y + h > window.innerHeight - 8) y = anchorY - h - 8;
+  pop.style.left = (x + window.scrollX) + "px";
+  pop.style.top = (y + window.scrollY) + "px";
+  activePopover = pop;
+  setTimeout(() => document.addEventListener("mousedown", onDocClick), 0);
+  return pop;
+}
+
+// Ghost preview helpers (used by openNewTaskPopover)
+let ghostBlock = null;
+function paintGhost(atTime, durMin, isEvent) {
+  removeGhost();
+  const gridEl = document.getElementById("grid");
+  const ctx = gridEl && gridEl._dayCtx;
+  if (!ctx) return;
+  // Only show ghost if the time is on the currently-displayed day
+  if (!isSameDay(atTime, ctx.day)) return;
+  const minsFromStart = (atTime.getHours() * 60 + atTime.getMinutes()) - ctx.startHour * 60;
+  if (minsFromStart < 0) return;
+  const top = (minsFromStart / 15) * SLOT_HEIGHT;
+  const height = (durMin / 15) * SLOT_HEIGHT - 2;
+  const startStr = fmtTime(atTime.toISOString());
+  const endStr = fmtTime(new Date(atTime.getTime() + durMin * 60000).toISOString());
+  ghostBlock = document.createElement("div");
+  ghostBlock.className = `block ghost ${isEvent ? "ghost-event" : ""} ${durMin >= 45 ? "tall" : durMin >= 30 ? "medium" : "short"}`;
+  ghostBlock.style.top = top + "px";
+  ghostBlock.style.height = height + "px";
+  ghostBlock.innerHTML = `
+    ${durMin >= 30 ? `<div class="block-time">${escapeHtml(startStr)}–${escapeHtml(endStr)}</div>` : ""}
+    <div class="block-title">+ new ${isEvent ? "event" : "task"}</div>`;
+  gridEl.appendChild(ghostBlock);
+}
+function removeGhost() {
+  if (ghostBlock) { ghostBlock.remove(); ghostBlock = null; }
+}
+
+function openNewTaskPopover(x, y, atTime) {
+  const tStr = fmtTime(atTime.toISOString());
+  // Recall last-used mode + calendar
+  const lastMode = localStorage.getItem("planner:newMode") || "task";
+  const lastCalId = localStorage.getItem("planner:lastEventCal") || "";
+  const calOptions = availableCalendars.length
+    ? availableCalendars.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === lastCalId ? "selected" : ""}>${escapeHtml(c.summary)}</option>`).join("")
+    : `<option value="">Primary</option>`;
+  const html = `
+    <div class="pop-row" style="gap:4px;">
+      <button class="mode-toggle ${lastMode === "task" ? "active" : ""}" data-mode="task">Task</button>
+      <button class="mode-toggle ${lastMode === "event" ? "active" : ""}" data-mode="event">Event</button>
+      <span style="margin-left:auto;color:var(--text-muted);font-size:12px;">at ${escapeHtml(tStr)}</span>
+    </div>
+    <div class="pop-row"><input class="pop-input" id="np-text" placeholder="What's it called?" autofocus /></div>
+    <div class="pop-row dur-pick">
+      <button data-dur="15">15m</button>
+      <button data-dur="30" class="active">30m</button>
+      <button data-dur="45">45m</button>
+      <button data-dur="60">1h</button>
+      <button data-dur="90">1.5h</button>
+    </div>
+    <div id="np-task-extras">
+      <div id="np-tagrow">${tagSelectorHtml(null)}</div>
+    </div>
+    <div id="np-event-extras" style="display:none;">
+      <div class="pop-row" style="gap:8px;">
+        <label style="color:var(--text-muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;">Calendar</label>
+        <select class="pop-input" id="np-cal" style="flex:1;">${calOptions}</select>
+      </div>
+      <div class="pop-row">
+        <textarea class="pop-input" id="np-desc" placeholder="Description (optional)" rows="2" style="resize:vertical;font-family:inherit;"></textarea>
+      </div>
+      <div class="pop-row">
+        <label style="display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="np-meet" style="accent-color:var(--accent);" /> Add Google Meet link
+        </label>
+      </div>
+    </div>
+    <div class="pop-row" id="np-status" style="display:none;color:var(--text-muted);font-size:12px;"></div>
+    <div class="pop-row" style="justify-content:flex-end;">
+      <button class="pop-btn" id="np-cancel">Cancel</button>
+      <button class="pop-btn primary" id="np-add">Add</button>
+    </div>`;
+  const pop = showPopover(html, x, y);
+  let dur = 30;
+  let chosenTag = null;
+  let mode = lastMode;
+  // Ghost preview on the grid + cleanup on close
+  paintGhost(atTime, dur, mode === "event");
+  popoverOnClose = removeGhost;
+  function applyMode() {
+    pop.querySelectorAll(".mode-toggle").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+    pop.querySelector("#np-task-extras").style.display = mode === "task" ? "" : "none";
+    pop.querySelector("#np-event-extras").style.display = mode === "event" ? "" : "none";
+    pop.querySelector("#np-add").textContent = mode === "event" ? "Add to calendar" : "Add";
+    paintGhost(atTime, dur, mode === "event");
+  }
+  applyMode();
+  pop.querySelectorAll(".mode-toggle").forEach(b => {
+    b.addEventListener("click", () => {
+      mode = b.dataset.mode;
+      localStorage.setItem("planner:newMode", mode);
+      applyMode();
+    });
+  });
+  pop.querySelectorAll(".dur-pick button").forEach(b => {
+    b.addEventListener("click", () => {
+      pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      dur = parseInt(b.dataset.dur, 10);
+      paintGhost(atTime, dur, mode === "event");
+    });
+  });
+  function rewireTags() {
+    wireTagSelector(pop, null, (tag) => {
+      chosenTag = tag;
+      pop.querySelector("#np-tagrow").innerHTML = tagSelectorHtml(chosenTag);
+      rewireTags();
+    });
+  }
+  rewireTags();
+  const input = pop.querySelector("#np-text");
+  setTimeout(() => input.focus(), 10);
+  const setStatus = (msg, isErr) => {
+    const s = pop.querySelector("#np-status");
+    s.style.display = msg ? "" : "none";
+    s.textContent = msg;
+    s.style.color = isErr ? "#ff9b8a" : "var(--text-muted)";
+  };
+  const submit = async () => {
+    const text = input.value.trim();
+    if (!text) return closePopover();
+
+    if (mode === "task") {
+      const parsed = parseCapture(text);
+      let finalTag = chosenTag;
+      if (parsed.tag) { ensureTag(parsed.tag); finalTag = parsed.tag; }
+      const arr = loadStore();
+      arr.push({
+        id: uid(), text: parsed.text || text, status: "scheduled",
+        scheduledFor: atTime.toISOString(),
+        estimatedMinutes: dur, tag: finalTag,
+        createdAt: new Date().toISOString(), completedAt: null,
+      });
+      saveStore(arr);
+      closePopover();
+      renderAll();
+      return;
+    }
+
+    // mode === "event"
+    const calId = pop.querySelector("#np-cal").value || "";
+    const description = pop.querySelector("#np-desc").value.trim();
+    const addMeet = pop.querySelector("#np-meet").checked;
+    const startIso = atTime.toISOString();
+    const endIso = new Date(atTime.getTime() + dur * 60000).toISOString();
+    const params = { summary: text, startTime: startIso, endTime: endIso };
+    if (calId) params.calendarId = calId;
+    if (description) params.description = description;
+    if (addMeet) params.addGoogleMeetUrl = true;
+    setStatus("Creating event…");
+    pop.querySelector("#np-add").disabled = true;
+    pop.querySelector("#np-cancel").disabled = true;
+    try {
+      const res = await window.cowork.callMcpTool(
+        "mcp__3a0189ff-940c-477d-967e-015cea265140__create_event", params
+      );
+      console.log("[planner] create_event response:", res);
+      // Persist last-used calendar
+      localStorage.setItem("planner:lastEventCal", calId);
+      closePopover();
+      // Refresh calendar to surface the new event
+      await loadCalendar();
+      renderGrid();
+      renderDayTabs();
+    } catch (e) {
+      console.warn("[planner] create_event failed", e);
+      setStatus(`Failed: ${e && e.message ? e.message : "see console"}`, true);
+      pop.querySelector("#np-add").disabled = false;
+      pop.querySelector("#np-cancel").disabled = false;
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && mode === "task") submit();
+    else if (e.key === "Escape") closePopover();
+  });
+  pop.querySelector("#np-add").addEventListener("click", submit);
+  pop.querySelector("#np-cancel").addEventListener("click", closePopover);
+}
+
+function openTaskPopover(blockEl, id) {
+  const arr = loadStore();
+  const t = arr.find(x => x.id === id);
+  if (!t) return;
+  const rect = blockEl.getBoundingClientRect();
+  const tStr = fmtTime(t.scheduledFor);
+  const dur = t.estimatedMinutes || 30;
+  const html = `
+    <div class="pop-row"><input class="pop-input" id="ep-text" value="${escapeHtml(t.text)}" /></div>
+    <div class="pop-row" style="gap:8px;">
+      <label style="color:var(--text-muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Time</label>
+      <input class="pop-input" id="ep-time" type="time" value="${escapeHtml(tStr)}" step="900" style="max-width:120px;" />
+      <select class="pop-input" id="ep-day" style="max-width:140px;">
+        ${[-1,0,1,2,3,4,5,6,7].map(off => {
+          const d = addDays(startOfDay(), off);
+          const label = off === 0 ? "Today" : off === 1 ? "Tomorrow" : off === -1 ? "Yesterday"
+            : d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+          const isCurrent = isSameDay(d, new Date(t.scheduledFor));
+          return `<option value="${off}" ${isCurrent ? "selected" : ""}>${escapeHtml(label)}</option>`;
+        }).join("")}
+      </select>
+    </div>
+    <div class="pop-row dur-pick">
+      <button data-dur="15" ${dur===15?"class='active'":""}>15m</button>
+      <button data-dur="30" ${dur===30?"class='active'":""}>30m</button>
+      <button data-dur="45" ${dur===45?"class='active'":""}>45m</button>
+      <button data-dur="60" ${dur===60?"class='active'":""}>1h</button>
+      <button data-dur="90" ${dur===90?"class='active'":""}>1.5h</button>
+    </div>
+    <div id="ep-tagrow">${tagSelectorHtml(t.tag)}</div>
+    <div class="pop-row" style="justify-content:space-between;">
+      <button class="pop-btn danger" id="ep-del">Delete</button>
+      <div style="display:flex;gap:6px;">
+        <button class="pop-btn" id="ep-unsched">→ Inbox</button>
+        <button class="pop-btn primary" id="ep-done">${t.status === "done" ? "Undo" : "Done"}</button>
+      </div>
+    </div>`;
+  const pop = showPopover(html, rect.right, rect.top);
+  let newDur = dur;
+  pop.querySelectorAll(".dur-pick button").forEach(b => {
+    b.addEventListener("click", () => {
+      pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      newDur = parseInt(b.dataset.dur, 10);
+      // Apply immediately
+      t.estimatedMinutes = newDur;
+      saveStore(arr);
+      renderGrid();
+    });
+  });
+  pop.querySelector("#ep-text").addEventListener("change", (e) => {
+    t.text = e.target.value.trim();
+    saveStore(arr);
+    renderGrid();
+  });
+  pop.querySelector("#ep-text").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") e.target.blur();
+    if (e.key === "Escape") closePopover();
+  });
+  // Time + day pickers — change scheduledFor live
+  function applyTimeAndDay() {
+    const timeStr = pop.querySelector("#ep-time").value; // "HH:MM"
+    const dayOff = parseInt(pop.querySelector("#ep-day").value, 10);
+    if (!timeStr || isNaN(dayOff)) return;
+    const [h, m] = timeStr.split(":").map(Number);
+    const d = addDays(startOfDay(), dayOff);
+    d.setHours(h, m, 0, 0);
+    t.scheduledFor = d.toISOString();
+    if (t.status === "inbox") t.status = "scheduled";
+    saveStore(arr);
+    renderAll();
+  }
+  pop.querySelector("#ep-time").addEventListener("change", applyTimeAndDay);
+  pop.querySelector("#ep-day").addEventListener("change", applyTimeAndDay);
+  // Wire tag selector — re-render on change for active state
+  function rewireEpTags() {
+    wireTagSelector(pop, t, (tag) => {
+      t.tag = tag;
+      saveStore(arr);
+      pop.querySelector("#ep-tagrow").innerHTML = tagSelectorHtml(t.tag);
+      rewireEpTags();
+      renderAll();
+    });
+  }
+  rewireEpTags();
+  pop.querySelector("#ep-del").addEventListener("click", () => {
+    const next = arr.filter(x => x.id !== id);
+    saveStore(next);
+    closePopover();
+    renderAll();
+  });
+  pop.querySelector("#ep-unsched").addEventListener("click", () => {
+    t.scheduledFor = null;
+    t.status = "inbox";
+    saveStore(arr);
+    closePopover();
+    renderAll();
+  });
+  pop.querySelector("#ep-done").addEventListener("click", () => {
+    if (t.status === "done") {
+      t.status = "scheduled";
+      t.completedAt = null;
+    } else {
+      t.status = "done";
+      t.completedAt = new Date().toISOString();
+    }
+    saveStore(arr);
+    closePopover();
+    renderAll();
+  });
+}
+
+// ---------- Event edit popover ----------
+function openEventPopover(blockEl, ev) {
+  const rect = blockEl.getBoundingClientRect();
+  const startMs = new Date(ev.startIso).getTime();
+  const endMs = new Date(ev.endIso).getTime();
+  const dur = Math.max(15, Math.round((endMs - startMs) / 60000));
+  const today = startOfDay();
+  const evDay = startOfDay(new Date(ev.startIso));
+  const dayOff = Math.round((evDay.getTime() - today.getTime()) / 86400000);
+  const tStr = fmtTime(ev.startIso);
+  const stops = CAL_COLORS[ev.colorIdx || 0];
+  const calColor = stops[1];
+
+  const dayOptions = [-2,-1,0,1,2,3,4,5,6,7,8,9,10,11,12,13].map(off => {
+    const d = addDays(today, off);
+    const label = off === 0 ? "Today" : off === 1 ? "Tomorrow" : off === -1 ? "Yesterday"
+      : d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    return `<option value="${off}" ${off === dayOff ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  }).join("");
+
+  const html = `
+    <div class="pop-row" style="gap:6px;align-items:center;">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${calColor};"></span>
+      <span style="color:var(--text-muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml(ev.calName || "Event")}</span>
+      ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener" style="margin-left:auto;color:var(--text-muted);font-size:11px;text-decoration:none;">Open in Google ↗</a>` : ""}
+    </div>
+    <div class="pop-row"><input class="pop-input" id="ev-text" value="${escapeHtml(ev.summary)}" /></div>
+    <div class="pop-row" style="gap:8px;">
+      <input class="pop-input" id="ev-time" type="time" value="${escapeHtml(tStr)}" step="900" style="max-width:120px;" />
+      <select class="pop-input" id="ev-day" style="max-width:160px;">${dayOptions}</select>
+    </div>
+    <div class="pop-row dur-pick">
+      <button data-dur="15" ${dur===15?"class='active'":""}>15m</button>
+      <button data-dur="30" ${dur===30?"class='active'":""}>30m</button>
+      <button data-dur="45" ${dur===45?"class='active'":""}>45m</button>
+      <button data-dur="60" ${dur===60?"class='active'":""}>1h</button>
+      <button data-dur="90" ${dur===90?"class='active'":""}>1.5h</button>
+    </div>
+    <div id="ev-tagrow">${tagSelectorHtml(getEventTag(ev.id))}</div>
+    <div class="pop-row" id="ev-status" style="display:none;font-size:12px;"></div>
+    <div class="pop-row" style="justify-content:space-between;">
+      <button class="pop-btn danger" id="ev-del">Delete</button>
+      <span style="color:var(--text-dim);font-size:11px;">Changes save automatically</span>
+    </div>`;
+  const pop = showPopover(html, rect.right, rect.top);
+
+  const setStatus = (msg, isErr) => {
+    const s = pop.querySelector("#ev-status");
+    s.style.display = msg ? "" : "none";
+    s.textContent = msg;
+    s.style.color = isErr ? "#ff9b8a" : "var(--accent)";
+  };
+
+  let pendingDur = dur;
+  let saveSeq = 0; // race-control: ignore stale responses
+
+  async function saveUpdate(updates) {
+    const params = { eventId: ev.id, ...updates };
+    if (ev.calId) params.calendarId = ev.calId;
+    setStatus("Saving…");
+    const mySeq = ++saveSeq;
+    try {
+      const res = await window.cowork.callMcpTool(
+        "mcp__3a0189ff-940c-477d-967e-015cea265140__update_event", params
+      );
+      console.log("[planner] update_event response:", res);
+      if (mySeq !== saveSeq) return; // a newer save happened
+      setStatus("Saved");
+      // Apply locally so UI doesn't wait for the refetch
+      if (updates.summary) ev.summary = updates.summary;
+      if (updates.startTime) ev.startIso = updates.startTime;
+      if (updates.endTime) ev.endIso = updates.endTime;
+      renderGrid();
+      // Re-fetch in the background to stay consistent
+      loadCalendar().then(() => { renderGrid(); renderDayTabs(); });
+      setTimeout(() => { if (mySeq === saveSeq) setStatus(""); }, 1500);
+    } catch (e) {
+      console.warn("[planner] update_event failed", e);
+      setStatus("Save failed: " + (e && e.message ? e.message : "see console"), true);
+    }
+  }
+
+  // Title — save on blur
+  pop.querySelector("#ev-text").addEventListener("change", (e) => {
+    const v = e.target.value.trim();
+    if (v && v !== ev.summary) saveUpdate({ summary: v });
+  });
+  pop.querySelector("#ev-text").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") e.target.blur();
+    if (e.key === "Escape") closePopover();
+  });
+
+  // Time + day — save on change
+  function applyTimeAndDay() {
+    const timeStr = pop.querySelector("#ev-time").value;
+    const newDayOff = parseInt(pop.querySelector("#ev-day").value, 10);
+    if (!timeStr || isNaN(newDayOff)) return;
+    const [h, m] = timeStr.split(":").map(Number);
+    const newStart = addDays(today, newDayOff);
+    newStart.setHours(h, m, 0, 0);
+    const newEnd = new Date(newStart.getTime() + pendingDur * 60000);
+    saveUpdate({ startTime: newStart.toISOString(), endTime: newEnd.toISOString() });
+  }
+  pop.querySelector("#ev-time").addEventListener("change", applyTimeAndDay);
+  pop.querySelector("#ev-day").addEventListener("change", applyTimeAndDay);
+
+  // Duration buttons — save on change
+  pop.querySelectorAll(".dur-pick button").forEach(b => {
+    b.addEventListener("click", () => {
+      pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      pendingDur = parseInt(b.dataset.dur, 10);
+      const newStart = new Date(ev.startIso);
+      const newEnd = new Date(newStart.getTime() + pendingDur * 60000);
+      saveUpdate({ startTime: newStart.toISOString(), endTime: newEnd.toISOString() });
+    });
+  });
+
+  // Tag selector — local only (event tags live in localStorage, not on Google Calendar)
+  function rewireEvTags() {
+    wireTagSelector(pop, null, (tag) => {
+      setEventTag(ev.id, tag);
+      pop.querySelector("#ev-tagrow").innerHTML = tagSelectorHtml(tag);
+      rewireEvTags();
+      renderGrid();
+      renderDone();
+    });
+  }
+  rewireEvTags();
+
+  // Delete
+  pop.querySelector("#ev-del").addEventListener("click", async () => {
+    if (!confirm(`Delete "${ev.summary}" from ${ev.calName || "your calendar"}? This deletes it from Google Calendar too.`)) return;
+    setStatus("Deleting…");
+    try {
+      const params = { eventId: ev.id };
+      if (ev.calId) params.calendarId = ev.calId;
+      await window.cowork.callMcpTool(
+        "mcp__3a0189ff-940c-477d-967e-015cea265140__delete_event", params
+      );
+      // Also remove from logged events if present
+      const log = loadLoggedEvents();
+      if (log[ev.id]) { delete log[ev.id]; saveLoggedEvents(log); }
+      closePopover();
+      await loadCalendar();
+      renderGrid();
+      renderDayTabs();
+      renderDone();
+    } catch (e) {
+      console.warn("[planner] delete_event failed", e);
+      setStatus("Delete failed: " + (e && e.message ? e.message : "see console"), true);
+    }
+  });
+}
+
+// ---------- Done section ----------
+let doneFilter = null; // null = all; "__none" = untagged; otherwise tag name
+
+function getDoneItems(daysBack, filter) {
+  const cutoff = Date.now() - daysBack * 86400000;
+  // Tasks
+  const taskItems = loadStore()
+    .filter(t => t.status === "done" && t.completedAt && new Date(t.completedAt).getTime() >= cutoff)
+    .map(t => ({ kind: "task", text: t.text, completedAt: t.completedAt, source: "", tag: t.tag || null }));
+  // Logged events
+  const logged = loadLoggedEvents();
+  const eventItems = Object.values(logged)
+    .filter(e => e.completedAt && new Date(e.completedAt).getTime() >= cutoff)
+    .map(e => ({ kind: "event", text: e.summary, completedAt: e.completedAt, source: e.calName || "", tag: e.tag || null }));
+  let combined = [...taskItems, ...eventItems];
+  if (filter) {
+    if (filter === "__none") combined = combined.filter(x => !x.tag);
+    else combined = combined.filter(x => x.tag === filter);
+  }
+  return combined.sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+}
+
+function renderDone() {
+  const allItems = getDoneItems(14);
+  const items = doneFilter ? getDoneItems(14, doneFilter) : allItems;
+  // Build the set of tags present in the last 14 days
+  const tagsInUse = new Set();
+  let untaggedCount = 0;
+  for (const i of allItems) {
+    if (i.tag) tagsInUse.add(i.tag); else untaggedCount++;
+  }
+  // Filter chips
+  const filterHost = document.getElementById("done-filters");
+  if (filterHost) {
+    const chips = [];
+    chips.push(`<button class="done-filter ${!doneFilter ? "active" : ""}" data-filter="">all (${allItems.length})</button>`);
+    if (untaggedCount) {
+      chips.push(`<button class="done-filter ${doneFilter === "__none" ? "active" : ""}" data-filter="__none">untagged (${untaggedCount})</button>`);
+    }
+    for (const tag of [...tagsInUse].sort()) {
+      const c = tagSolid(tag) || "var(--accent)";
+      const isActive = doneFilter === tag;
+      const count = allItems.filter(i => i.tag === tag).length;
+      chips.push(`<button class="done-filter ${isActive ? "active" : ""}" data-filter="${escapeHtml(tag)}" style="${isActive ? `background:${c};color:#0a0a0c;border-color:${c};` : `border-left:4px solid ${c};`}">#${escapeHtml(tag)} (${count})</button>`);
+    }
+    filterHost.innerHTML = chips.join("");
+    filterHost.querySelectorAll(".done-filter").forEach(b => {
+      b.addEventListener("click", () => {
+        const v = b.dataset.filter;
+        doneFilter = v === "" ? null : v;
+        renderDone();
+      });
+    });
+  }
+
+  document.getElementById("done-count").textContent = allItems.length ? `· ${allItems.length} in last 14 days` : "· nothing yet";
+  if (!items.length) {
+    document.getElementById("done-body").innerHTML = '<div style="color:var(--text-dim);font-style:italic;padding:8px 0;">' + (doneFilter ? "Nothing matches this filter." : "No completed tasks or logged events yet.") + '</div>';
+    return;
+  }
+  const today = startOfDay();
+  const groups = {};
+  for (const t of items) {
+    const day = startOfDay(new Date(t.completedAt)).getTime();
+    (groups[day] = groups[day] || []).push(t);
+  }
+  const sorted = Object.keys(groups).map(Number).sort((a,b) => b - a);
+  document.getElementById("done-body").innerHTML = sorted.map(day => {
+    const d = new Date(day);
+    const label = isSameDay(d, today) ? "Today"
+      : isSameDay(d, addDays(today, -1)) ? "Yesterday"
+      : d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    return `<div class="done-day-label">${escapeHtml(label)}</div>` + groups[day].map(t => {
+      const kindBadge = t.kind === "event"
+        ? `<span style="font-size:9px;background:var(--surface-2);color:var(--event);padding:1px 5px;border-radius:3px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;margin-right:4px;">cal${t.source ? "·" + escapeHtml(t.source) : ""}</span>`
+        : "";
+      const tagChip = t.tag
+        ? `<span class="block-tag" style="background:${tagSolid(t.tag)};color:#0a0a0c;margin-right:5px;">${escapeHtml(t.tag)}</span>`
+        : "";
+      return `
+      <div class="done-row">
+        <span class="done-tick">✓</span>
+        <span class="done-text">${kindBadge}${tagChip}${escapeHtml(t.text)}</span>
+        <span class="done-when">${escapeHtml(fmtTime(t.completedAt))}</span>
+      </div>`;
+    }).join("");
+  }).join("");
+}
+
+// ---------- Capture ----------
+const captureInput = document.getElementById("capture");
+captureInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && captureInput.value.trim()) {
+    const parsed = parseCapture(captureInput.value);
+    if (!parsed.text) return;
+    if (parsed.tag) ensureTag(parsed.tag);
+    const arr = loadStore();
+    arr.push({
+      id: uid(), text: parsed.text,
+      status: parsed.scheduledFor ? "scheduled" : "inbox",
+      scheduledFor: parsed.scheduledFor,
+      estimatedMinutes: parsed.estimatedMinutes,
+      tag: parsed.tag || null,
+      createdAt: new Date().toISOString(), completedAt: null,
+    });
+    saveStore(arr);
+    captureInput.value = "";
+    renderAll();
+  }
+});
+
+document.getElementById("copy-done").addEventListener("click", async () => {
+  const items = getDoneItems(7, doneFilter);
+  if (!items.length) return;
+  const text = items.map(t => `- ${t.text}`).join("\n");
+  const btn = document.getElementById("copy-done");
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = "Copied!";
+    btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = "Copy this week as bullets"; btn.classList.remove("copied"); }, 1500);
+  } catch {
+    btn.textContent = "Copy failed";
+  }
+});
+
+// ---------- Boot ----------
+function renderAll() {
+  renderDayTabs();
+  renderInbox();
+  renderGrid();
+  renderDone();
+}
+
+// ---------- Calendar picker ----------
+function updateCalPickerLabel() {
+  const sel = loadSelectedCalIds();
+  const label = document.getElementById("cal-picker-label");
+  if (!label) return;
+  if (calListState === "loading") { label.textContent = "Loading calendars…"; return; }
+  if (calListState === "error") { label.textContent = "Calendars (error)"; return; }
+  if (sel === null) {
+    label.textContent = "Calendars (primary)";
+  } else {
+    const n = sel.size;
+    label.textContent = n === 0 ? "Calendars (none)" : `Calendars (${n})`;
+  }
+}
+
+async function openCalendarPicker(e) {
+  // Capture anchor synchronously — e.currentTarget is null after await
+  const anchor = e && e.currentTarget ? e.currentTarget : document.getElementById("cal-picker-btn");
+  // If we don't have the list, retry the fetch first
+  if (!availableCalendars.length && calListState !== "loading") {
+    await loadCalendarList();
+  }
+  if (!availableCalendars.length) {
+    // Show a popover with the raw payload + manual-add option, so we can debug + still get the user unblocked
+    const rawText = calListRawDebug != null
+      ? (typeof calListRawDebug === "string" ? calListRawDebug : JSON.stringify(calListRawDebug, null, 2))
+      : "(no response captured)";
+    const errLine = calListError ? `<div class="err" style="margin-bottom:8px;">${escapeHtml(calListError)}</div>` : "";
+    const html = `
+      <div class="cal-picker-popover" style="min-width:380px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);font-weight:700;padding:4px 0 8px;">Calendar list came back empty</div>
+        ${errLine}
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Raw response from the connector:</div>
+        <pre style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:10px;color:var(--text-muted);max-height:160px;overflow:auto;white-space:pre-wrap;word-break:break-all;">${escapeHtml(rawText.slice(0, 2000))}</pre>
+        <div style="font-size:12px;color:var(--text-muted);margin:14px 0 6px;">Or paste a calendar ID manually (e.g. <code style="color:var(--accent);font-size:11px;">you@example.com</code>):</div>
+        <div class="pop-row" style="gap:6px;">
+          <input class="pop-input" id="manual-cal-id" placeholder="calendar id" style="flex:1;" />
+          <button class="pop-btn primary" id="manual-cal-add">Add</button>
+        </div>
+        <div class="cal-actions">
+          <button id="cal-retry">Retry fetch</button>
+          <button id="cal-close">Close</button>
+        </div>
+      </div>`;
+    const rect = anchor.getBoundingClientRect();
+    const pop = showPopover(html, rect.right - 380, rect.bottom);
+    pop.querySelector("#manual-cal-add").addEventListener("click", () => {
+      const id = pop.querySelector("#manual-cal-id").value.trim();
+      if (!id) return;
+      // Synthesize a calendar entry so the user can use it
+      const overrides = loadCalColorOverrides();
+      const colorIdx = overrides[id] != null ? overrides[id] : (availableCalendars.length % CAL_COLORS.length);
+      availableCalendars.push({ id, summary: id, timeZone: null, colorIdx });
+      const cur = loadSelectedCalIds() || new Set();
+      cur.add(id);
+      saveSelectedCalIds(cur);
+      closePopover();
+      updateCalPickerLabel();
+      refreshCalendarAndRender();
+    });
+    pop.querySelector("#cal-retry").addEventListener("click", async () => {
+      closePopover();
+      await loadCalendarList();
+      // Re-open with a synthesized event-like object pointing at the button
+      openCalendarPicker({ currentTarget: document.getElementById("cal-picker-btn") });
+    });
+    pop.querySelector("#cal-close").addEventListener("click", closePopover);
+    return;
+  }
+  const sel = loadSelectedCalIds() || new Set(); // null → empty selection-state for popover purposes
+  const isDefault = loadSelectedCalIds() === null;
+  const rows = availableCalendars.map(c => {
+    const stops = CAL_COLORS[c.colorIdx];
+    const dotBg = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+    const checked = isDefault ? "" : (sel.has(c.id) ? "checked" : "");
+    return `<label class="cal-row" data-cal="${escapeHtml(c.id)}">
+      <input type="checkbox" data-id="${escapeHtml(c.id)}" ${checked} />
+      <button type="button" class="cal-dot" data-cal="${escapeHtml(c.id)}" style="background:${dotBg};" title="Change color"></button>
+      <span class="cal-name">${escapeHtml(c.summary)}</span>
+    </label>`;
+  }).join("");
+  const html = `
+    <div class="cal-picker-popover">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);font-weight:700;padding:4px 8px 8px;">Show events from</div>
+      ${rows}
+      <div class="cal-actions">
+        <button id="cal-all">Select all</button>
+        <button id="cal-none">None</button>
+        <button id="cal-default">Reset</button>
+      </div>
+    </div>`;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pop = showPopover(html, rect.right - 280, rect.bottom);
+  pop.querySelectorAll("input[type='checkbox']").forEach(cb => {
+    cb.addEventListener("change", () => {
+      let cur = loadSelectedCalIds();
+      if (cur === null) cur = new Set();
+      if (cb.checked) cur.add(cb.dataset.id); else cur.delete(cb.dataset.id);
+      saveSelectedCalIds(cur);
+      updateCalPickerLabel();
+      refreshCalendarAndRender();
+    });
+  });
+  // Wire color dot — click expands into the 8-color grid, click a swatch picks it
+  pop.querySelectorAll(".cal-dot").forEach(dot => {
+    dot.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      expandColorGrid(dot);
+    });
+  });
+  pop.querySelector("#cal-all").addEventListener("click", () => {
+    const all = new Set(availableCalendars.map(c => c.id));
+    saveSelectedCalIds(all);
+    closePopover();
+    updateCalPickerLabel();
+    refreshCalendarAndRender();
+  });
+  pop.querySelector("#cal-none").addEventListener("click", () => {
+    saveSelectedCalIds(new Set());
+    closePopover();
+    updateCalPickerLabel();
+    refreshCalendarAndRender();
+  });
+  pop.querySelector("#cal-default").addEventListener("click", () => {
+    try { localStorage.removeItem(CALS_KEY); } catch {}
+    closePopover();
+    updateCalPickerLabel();
+    refreshCalendarAndRender();
+  });
+}
+
+async function refreshCalendarAndRender() {
+  await loadCalendar();
+  renderGrid();
+  renderDayTabs();
+}
+
+function expandColorGrid(dotBtn) {
+  const calId = dotBtn.dataset.cal;
+  const c = availableCalendars.find(x => x.id === calId);
+  if (!c) return;
+  const grid = document.createElement("div");
+  grid.className = "color-grid";
+  grid.dataset.cal = calId;
+  grid.innerHTML = CAL_COLORS.map((stops, i) => {
+    const bg = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+    return `<button type="button" class="${i === c.colorIdx ? "current" : ""}" data-idx="${i}" style="background:${bg};" title="${escapeHtml(CAL_COLOR_NAMES[i] || "")}"></button>`;
+  }).join("");
+  dotBtn.replaceWith(grid);
+  grid.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const newIdx = parseInt(b.dataset.idx, 10);
+      saveCalColorOverride(calId, newIdx);
+      c.colorIdx = newIdx;
+      // Re-tint events on the grid
+      // Mutate calendarEvents in place rather than refetching
+      for (const ev of calendarEvents) {
+        if (ev.calId === calId) ev.colorIdx = newIdx;
+      }
+      // Replace grid back with new colored dot
+      const stops = CAL_COLORS[newIdx];
+      const newDot = document.createElement("button");
+      newDot.type = "button";
+      newDot.className = "cal-dot";
+      newDot.dataset.cal = calId;
+      newDot.style.background = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+      newDot.title = "Change color";
+      newDot.addEventListener("click", (ev2) => {
+        ev2.preventDefault();
+        ev2.stopPropagation();
+        expandColorGrid(newDot);
+      });
+      grid.replaceWith(newDot);
+      renderGrid();
+    });
+  });
+}
+
+document.getElementById("cal-picker-btn").addEventListener("click", openCalendarPicker);
+
+// Backup / Restore
+document.getElementById("backup-btn").addEventListener("click", () => {
+  const data = { tasks: loadStore(), state: loadState(), exportedAt: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  a.download = `planner-backup-${stamp}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+document.getElementById("restore-btn").addEventListener("click", () => {
+  document.getElementById("restore-input").click();
+});
+document.getElementById("restore-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data.tasks || !Array.isArray(data.tasks)) throw new Error("Not a valid backup file.");
+    if (!confirm(`Restore ${data.tasks.length} tasks? This replaces your current data.`)) return;
+    saveStore(data.tasks);
+    if (data.state) saveState(data.state);
+    renderAll();
+  } catch (err) {
+    alert("Restore failed: " + err.message);
+  }
+  e.target.value = "";
+});
+
+async function boot() {
+  if (!window.cowork || typeof window.cowork.callMcpTool !== "function") {
+    setTimeout(boot, 100); return;
+  }
+  wireGridListeners();
+
+  // 1) Hydrate from cache instantly (stale-while-revalidate)
+  const cached = loadEventsFromCache();
+  if (cached && cached.events) {
+    calendarEvents = cached.events;
+  }
+  renderAll();
+  updateCalPickerLabel();
+  // Auto-scroll to current time even before fresh fetch
+  if (state.activeDayOffset === 0) {
+    setTimeout(() => {
+      const now = document.querySelector(".now-line");
+      if (now) now.scrollIntoView({ block: "center", behavior: "instant" });
+    }, 50);
+  }
+
+  // 2) Fetch fresh in the background and re-render once it arrives
+  setSyncing(true);
+  try {
+    await loadCalendarList();
+    refreshColorIdxFromAvailable();
+    renderGrid(); // re-tint immediately if list_calendars returned new colors
+    await loadCalendar();
+  } finally {
+    setSyncing(false);
+  }
+  updateCalPickerLabel();
+  renderGrid();
+  renderDayTabs();
+}
+
+function setSyncing(on) {
+  const meta = document.getElementById("day-meta");
+  if (!meta) return;
+  meta.dataset.syncing = on ? "1" : "";
+  if (on) meta.textContent = (meta.textContent || "") + " · syncing…";
+  // The next renderGrid will overwrite this with the canonical text
+}
+boot();
+</script>
+</body>
+</html>
