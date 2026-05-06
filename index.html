@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Holding Pattern // Daily Planner</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#fb923c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Holding Pattern">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js" async defer></script>
 <style>
@@ -164,6 +171,12 @@
     background: var(--surface);
     color: var(--accent);
     border-color: var(--accent-strong);
+  }
+  .day-tab.drop-target {
+    background: rgba(251, 146, 60, 0.18);
+    color: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.25);
   }
   .day-tab .day-tab-day { font-size: 18px; font-weight: 700; line-height: 1; }
   .day-tab .day-tab-name { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.85; }
@@ -2291,6 +2304,19 @@ function renderInbox() {
 let pendingInboxDrag = null;
 let inboxSuppressClick = false;
 
+// Find a day-tab under the cursor (for tab-as-drop-target)
+function dayTabUnderPoint(x, y) {
+  const tabs = document.querySelectorAll(".day-tab");
+  for (const t of tabs) {
+    const r = t.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return t;
+  }
+  return null;
+}
+function clearDayTabDropTargets() {
+  document.querySelectorAll(".day-tab.drop-target").forEach(t => t.classList.remove("drop-target"));
+}
+
 function onInboxPointerMove(e) {
   if (!pendingInboxDrag) return;
   const dx = e.clientX - pendingInboxDrag.startX;
@@ -2306,6 +2332,19 @@ function onInboxPointerMove(e) {
     try { pendingInboxDrag.item.setPointerCapture(e.pointerId); } catch {}
   }
   if (e.cancelable) e.preventDefault();
+
+  // Check day-tab targets first
+  const tab = dayTabUnderPoint(e.clientX, e.clientY);
+  clearDayTabDropTargets();
+  pendingInboxDrag.targetTab = null;
+  if (tab) {
+    tab.classList.add("drop-target");
+    pendingInboxDrag.targetTab = tab;
+    const gridEl = document.getElementById("grid");
+    if (gridEl) gridEl.classList.remove("drop-over");
+    removeGhost();
+    return;
+  }
 
   const gridEl = document.getElementById("grid");
   if (!gridEl) return;
@@ -2346,6 +2385,26 @@ function onInboxPointerUp(e) {
   const gridEl = document.getElementById("grid");
   if (gridEl) gridEl.classList.remove("drop-over");
   removeGhost();
+  clearDayTabDropTargets();
+
+  // Drop on a day-tab → schedule for that day at default time (9am)
+  if (p.targetTab) {
+    const offset = parseInt(p.targetTab.dataset.offset, 10);
+    if (!isNaN(offset)) {
+      const day = addDays(startOfDay(), offset);
+      day.setHours(9, 0, 0, 0);
+      const arr = loadStore();
+      const t = arr.find(x => x.id === p.id);
+      if (t) {
+        t.scheduledFor = day.toISOString();
+        t.status = "scheduled";
+        saveStore(arr);
+        renderAll();
+      }
+    }
+    window.__inboxDragTask = null;
+    return;
+  }
 
   // Determine if pointer is over the grid → schedule
   if (gridEl) {
@@ -2834,6 +2893,14 @@ function onBlockMouseMove(e) {
       pendingDrag.willUnschedule = !!overInbox;
       inboxEl.classList.toggle("drag-target", !!overInbox);
     }
+    // Drop-on-day-tab = move task to that day (preserving time)
+    const tab = dayTabUnderPoint(e.clientX, e.clientY);
+    clearDayTabDropTargets();
+    pendingDrag.targetTab = null;
+    if (tab && !pendingDrag.willUnschedule) {
+      tab.classList.add("drop-target");
+      pendingDrag.targetTab = tab;
+    }
     // Cross-column drag: in multi mode, follow cursor to a different day column
     if (ctx.dayCount > 1 && !pendingDrag.willUnschedule) {
       const gridEl = document.getElementById("grid");
@@ -2867,6 +2934,11 @@ function onBlockMouseMove(e) {
   const tip = ensureDragTip();
   if (pendingDrag.willUnschedule) {
     tip.textContent = "→ Inbox (unschedule)";
+  } else if (pendingDrag.targetTab) {
+    const off = parseInt(pendingDrag.targetTab.dataset.offset, 10);
+    const d = isNaN(off) ? null : addDays(startOfDay(), off);
+    const lbl = d ? d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "";
+    tip.textContent = `→ ${lbl}`;
   } else {
     const dayIdxForTip = (pendingDrag.kind === "move" && pendingDrag.currentDayIdx != null)
       ? pendingDrag.currentDayIdx
@@ -2910,13 +2982,31 @@ function onBlockMouseUp(e) {
   // Drop on inbox = unschedule
   if (p.kind === "move" && p.willUnschedule) {
     document.querySelector(".inbox-panel")?.classList.remove("drag-target");
+    clearDayTabDropTargets();
     t.scheduledFor = null;
     t.status = "inbox";
     saveStore(arr);
     renderAll();
     return;
   }
+  // Drop on day-tab = move to that day (preserving time)
+  if (p.kind === "move" && p.targetTab) {
+    document.querySelector(".inbox-panel")?.classList.remove("drag-target");
+    clearDayTabDropTargets();
+    const off = parseInt(p.targetTab.dataset.offset, 10);
+    if (!isNaN(off) && t.scheduledFor) {
+      const orig = new Date(t.scheduledFor);
+      const newDay = addDays(startOfDay(), off);
+      newDay.setHours(orig.getHours(), orig.getMinutes(), 0, 0);
+      t.scheduledFor = newDay.toISOString();
+      t.status = "scheduled";
+      saveStore(arr);
+      renderAll();
+    }
+    return;
+  }
   document.querySelector(".inbox-panel")?.classList.remove("drag-target");
+  clearDayTabDropTargets();
   if (p.kind === "move" || p.kind === "resize-top") {
     const minutesFromGridStart = (newTop / SLOT_HEIGHT) * 15;
     const totalMins = ctx.startHour * 60 + minutesFromGridStart;
@@ -2941,6 +3031,14 @@ function onBlockMouseUp(e) {
 document.addEventListener("pointermove", onBlockMouseMove, { passive: false });
 document.addEventListener("pointerup", onBlockMouseUp);
 document.addEventListener("pointercancel", onBlockMouseUp);
+
+// Register service worker so the app installs as a PWA. Will fail silently in
+// non-PWA contexts (Cowork iframe, file://, etc.) — that's intentional.
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  });
+}
 
 // Global keyboard shortcuts
 document.addEventListener("keydown", (e) => {
