@@ -194,6 +194,12 @@
     border-radius: 14px;
     padding: 12px 14px 6px;
     margin-bottom: 18px;
+    transition: border-color 0.12s, box-shadow 0.12s, background-color 0.12s;
+  }
+  .inbox-panel.drag-target {
+    border-color: var(--accent);
+    background: rgba(251, 146, 60, 0.06);
+    box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.18);
   }
   .inbox-disclosure { margin-top: 10px; }
   .inbox-disclosure summary {
@@ -2819,6 +2825,29 @@ function onBlockMouseMove(e) {
     pendingDrag.block.style.top = newTop + "px";
     liveTopMin = ctx.startHour * 60 + (newTop / SLOT_HEIGHT) * 15;
     liveDurMin = (pendingDrag.originalHeight + 2) / SLOT_HEIGHT * 15;
+    // Drop-on-inbox = unschedule
+    const inboxEl = document.querySelector(".inbox-panel");
+    if (inboxEl) {
+      const r = inboxEl.getBoundingClientRect();
+      const overInbox = e.clientX >= r.left && e.clientX <= r.right
+                     && e.clientY >= r.top && e.clientY <= r.bottom;
+      pendingDrag.willUnschedule = !!overInbox;
+      inboxEl.classList.toggle("drag-target", !!overInbox);
+    }
+    // Cross-column drag: in multi mode, follow cursor to a different day column
+    if (ctx.dayCount > 1 && !pendingDrag.willUnschedule) {
+      const gridEl = document.getElementById("grid");
+      const gridRect = gridEl.getBoundingClientRect();
+      const x = e.clientX - gridRect.left;
+      const newDayIdx = Math.max(0, Math.min(ctx.dayCount - 1, Math.floor((x / gridRect.width) * ctx.dayCount)));
+      if (newDayIdx !== pendingDrag.currentDayIdx) {
+        pendingDrag.currentDayIdx = newDayIdx;
+        const dayBand = 100 / ctx.dayCount;
+        pendingDrag.block.style.left = `calc(${newDayIdx * dayBand}% + 4px)`;
+        pendingDrag.block.style.width = `calc(${dayBand}% - 8px)`;
+        pendingDrag.block.style.right = "auto";
+      }
+    }
   } else if (pendingDrag.kind === "resize-bottom") {
     const newHeight = Math.max(SLOT_HEIGHT, pendingDrag.originalHeight + snappedDy);
     pendingDrag.block.style.height = newHeight + "px";
@@ -2834,13 +2863,24 @@ function onBlockMouseMove(e) {
     liveDurMin = Math.round((newHeight + 2) / SLOT_HEIGHT) * 15;
   }
 
-  // Live tooltip showing current snapped time/duration
+  // Live tooltip showing current snapped time/duration (and day if cross-column)
   const tip = ensureDragTip();
-  const startD = new Date(ctx.day);
-  startD.setHours(0,0,0,0);
-  startD.setMinutes(liveTopMin);
-  const endD = new Date(startD.getTime() + liveDurMin * 60000);
-  tip.textContent = `${fmtTime(startD.toISOString())}–${fmtTime(endD.toISOString())}  ·  ${liveDurMin}m`;
+  if (pendingDrag.willUnschedule) {
+    tip.textContent = "→ Inbox (unschedule)";
+  } else {
+    const dayIdxForTip = (pendingDrag.kind === "move" && pendingDrag.currentDayIdx != null)
+      ? pendingDrag.currentDayIdx
+      : (parseInt(pendingDrag.block.dataset.dayIdx, 10) || 0);
+    const tipDay = (ctx.days && ctx.days[dayIdxForTip]) || (ctx.days && ctx.days[0]) || startOfDay();
+    const startD = new Date(tipDay);
+    startD.setHours(0, 0, 0, 0);
+    startD.setMinutes(liveTopMin);
+    const endD = new Date(startD.getTime() + liveDurMin * 60000);
+    const dayPrefix = ctx.dayCount > 1
+      ? tipDay.toLocaleDateString([], { weekday: "short" }) + "  ·  "
+      : "";
+    tip.textContent = `${dayPrefix}${fmtTime(startD.toISOString())}–${fmtTime(endD.toISOString())}  ·  ${liveDurMin}m`;
+  }
   tip.style.left = (e.clientX + 14) + "px";
   tip.style.top = (e.clientY + 14) + "px";
 }
@@ -2867,11 +2907,23 @@ function onBlockMouseUp(e) {
   const newTop = parseInt(p.block.style.top, 10);
   const newHeight = parseInt(p.block.style.height, 10);
 
+  // Drop on inbox = unschedule
+  if (p.kind === "move" && p.willUnschedule) {
+    document.querySelector(".inbox-panel")?.classList.remove("drag-target");
+    t.scheduledFor = null;
+    t.status = "inbox";
+    saveStore(arr);
+    renderAll();
+    return;
+  }
+  document.querySelector(".inbox-panel")?.classList.remove("drag-target");
   if (p.kind === "move" || p.kind === "resize-top") {
     const minutesFromGridStart = (newTop / SLOT_HEIGHT) * 15;
     const totalMins = ctx.startHour * 60 + minutesFromGridStart;
-    // Keep the block on its own day (multi-day cross-column drag is not yet supported)
-    const dayIdx = parseInt(p.block.dataset.dayIdx, 10) || 0;
+    // For "move" use the cursor-tracked day (cross-column drag); for resize stay on original day.
+    const dayIdx = (p.kind === "move" && p.currentDayIdx != null)
+      ? p.currentDayIdx
+      : (parseInt(p.block.dataset.dayIdx, 10) || 0);
     const day = (ctx.days && ctx.days[dayIdx]) || (ctx.days && ctx.days[0]) || startOfDay();
     const newStart = new Date(day);
     newStart.setHours(0,0,0,0);
