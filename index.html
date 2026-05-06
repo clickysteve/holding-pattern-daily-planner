@@ -1073,6 +1073,9 @@
     .day-head h2 { font-size: 16px; }
     .data-footer { flex-direction: column; align-items: stretch; }
     .data-footer .data-actions { justify-content: flex-end; }
+    /* Hide multi-day toggle on phones — not usable at narrow widths */
+    .view-toggle { display: none !important; }
+    .multi-day-headers { display: none !important; }
     /* Popover: full-width-ish, centered */
     .popover {
       left: 12px !important;
@@ -1945,7 +1948,9 @@ let state = Object.assign({ activeDayOffset: 0, viewMode: "day", multiDays: 3 },
 
 function getActiveDays() {
   const start = addDays(startOfDay(), state.activeDayOffset || 0);
-  if (state.viewMode === "multi") {
+  // Multi-day is desktop-only — phones don't have horizontal room for usable columns
+  const isNarrow = (typeof window !== "undefined") && window.innerWidth < 700;
+  if (state.viewMode === "multi" && !isNarrow) {
     const n = Math.max(2, Math.min(7, state.multiDays || 3));
     return Array.from({ length: n }, (_, i) => addDays(start, i));
   }
@@ -2932,6 +2937,20 @@ document.addEventListener("pointerup", (e) => {
   renderPageMonth();
 }, { passive: true });
 document.addEventListener("pointercancel", () => { swipeStart = null; });
+
+// Re-render when crossing the multi-day breakpoint (e.g. tablet rotation, window resize)
+let _lastNarrow = (typeof window !== "undefined") && window.innerWidth < 700;
+let _resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    const nowNarrow = window.innerWidth < 700;
+    if (nowNarrow !== _lastNarrow) {
+      _lastNarrow = nowNarrow;
+      renderAll();
+    }
+  }, 150);
+});
 
 // ---------- Grid-level listeners (attached once) ----------
 function wireGridListeners() {
