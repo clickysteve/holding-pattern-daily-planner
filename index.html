@@ -384,6 +384,31 @@
     margin-left: 56px;
   }
   .grid.drop-over { background-color: rgba(251, 146, 60, 0.07); }
+  .grid.multi {
+    /* Vertical dividers between day columns + horizontal hour grid */
+    background:
+      repeating-linear-gradient(
+        to right,
+        transparent 0,
+        transparent calc(100% / var(--day-count, 1) - 1px),
+        var(--border) calc(100% / var(--day-count, 1) - 1px),
+        var(--border) calc(100% / var(--day-count, 1))
+      ),
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent calc(var(--slot-h) * 4 - 1px),
+        var(--border) calc(var(--slot-h) * 4 - 1px),
+        var(--border) calc(var(--slot-h) * 4)
+      ),
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent calc(var(--slot-h) * 2 - 1px),
+        var(--border) calc(var(--slot-h) * 2 - 1px),
+        var(--border) calc(var(--slot-h) * 2)
+      );
+  }
   .hour-labels {
     position: absolute;
     left: 0;
@@ -742,6 +767,70 @@
     color: white;
   }
   .mode-toggle:hover:not(.active) { color: var(--accent); border-color: var(--accent); }
+
+  .day-head-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  .view-toggle {
+    display: inline-flex;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .vt-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .vt-btn.active {
+    background: var(--accent-strong);
+    color: white;
+  }
+  .vt-btn:hover:not(.active) { color: var(--text); }
+
+  /* Multi-day day-headers row above grid */
+  .multi-day-headers {
+    display: grid;
+    gap: 4px;
+    padding: 6px 0 8px;
+    margin-left: 56px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+  }
+  .multi-day-header {
+    text-align: center;
+    padding: 4px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .multi-day-header:hover { background: var(--surface-2); color: var(--text); }
+  .multi-day-header.is-today {
+    color: var(--accent);
+    border-color: var(--accent-strong);
+  }
+  .multi-day-header .mdh-name {
+    display: block;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+  }
+  .multi-day-header .mdh-day {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
 
   .cal-picker-btn {
     background: var(--surface-2);
@@ -1146,14 +1235,19 @@
   <main class="day-panel">
     <div class="day-head">
       <h2 id="day-title">Today</h2>
-      <div style="display:flex;gap:10px;align-items:center;">
+      <div class="day-head-actions">
         <span class="day-meta" id="day-meta"></span>
+        <div class="view-toggle">
+          <button class="vt-btn" id="vt-day">Day</button>
+          <button class="vt-btn" id="vt-multi">Multi <span id="vt-count">3</span></button>
+        </div>
         <button class="cal-picker-btn" id="cal-picker-btn" title="Choose calendars">
           <span style="font-size:14px;">📅</span>
           <span id="cal-picker-label">Calendars</span>
         </button>
       </div>
     </div>
+    <div class="multi-day-headers" id="multi-day-headers" style="display:none;"></div>
     <div class="all-day-strip" id="all-day-strip"></div>
     <div class="grid-wrap">
       <div class="hour-labels" id="hour-labels"></div>
@@ -1847,7 +1941,16 @@ function parseCapture(text) {
 }
 
 // ---------- State ----------
-let state = Object.assign({ activeDayOffset: 0 }, loadState());
+let state = Object.assign({ activeDayOffset: 0, viewMode: "day", multiDays: 3 }, loadState());
+
+function getActiveDays() {
+  const start = addDays(startOfDay(), state.activeDayOffset || 0);
+  if (state.viewMode === "multi") {
+    const n = Math.max(2, Math.min(7, state.multiDays || 3));
+    return Array.from({ length: n }, (_, i) => addDays(start, i));
+  }
+  return [start];
+}
 let calendarEvents = [];
 let availableCalendars = []; // [{id, summary, timeZone, colorIdx}]
 
@@ -2205,12 +2308,14 @@ function onInboxPointerMove(e) {
     const dragTask = window.__inboxDragTask;
     if (ctx && dragTask) {
       const y = e.clientY - gridRect.top;
+      const x = e.clientX - gridRect.left;
+      const day = ctx.dayFromX(x, gridRect.width);
       const rawMins = ctx.startHour * 60 + (y / SLOT_HEIGHT) * 15;
       const dropMins = Math.max(0, Math.round(rawMins / 30) * 30);
-      const dropTime = new Date(ctx.day);
+      const dropTime = new Date(day);
       dropTime.setHours(0, 0, 0, 0);
       dropTime.setMinutes(dropMins);
-      paintGhost(dropTime, dragTask.estimatedMinutes || 30, false);
+      paintGhost(dropTime, dragTask.estimatedMinutes || 30, false, ctx.dayCount > 1 ? ctx.days.indexOf(day) : 0, ctx.dayCount);
     }
   } else {
     gridEl.classList.remove("drop-over");
@@ -2241,13 +2346,15 @@ function onInboxPointerUp(e) {
       const ctx = gridEl._dayCtx;
       if (ctx) {
         const y = e.clientY - gridRect.top;
+        const x = e.clientX - gridRect.left;
+        const day = ctx.dayFromX(x, gridRect.width);
         const rawMins = ctx.startHour * 60 + (y / SLOT_HEIGHT) * 15;
         const dropMins = Math.max(0, Math.round(rawMins / 30) * 30);
-        const dropTime = new Date(ctx.day);
+        const dropTime = new Date(day);
         dropTime.setHours(0, 0, 0, 0);
         dropTime.setMinutes(dropMins);
         const arr = loadStore();
-        const t = arr.find(x => x.id === p.id);
+        const t = arr.find(x2 => x2.id === p.id);
         if (t) {
           t.scheduledFor = dropTime.toISOString();
           t.status = "scheduled";
@@ -2300,32 +2407,163 @@ function getDayBounds(date) {
   return { startHour: Math.max(0, startHour), endHour: Math.min(28, endHour + 1) };
 }
 
-function renderGrid() {
-  const offset = state.activeDayOffset || 0;
-  const day = addDays(startOfDay(), offset);
-  const dayLabel = offset === 0 ? "Today" : offset === 1 ? "Tomorrow"
-    : day.toLocaleDateString([], { weekday: "long" });
-  document.getElementById("day-title").textContent = `${dayLabel} · ${day.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}`;
+// Compute overlap layout (clusters → column assignment) for items in a single day.
+function computeOverlapLayoutForDay(events, tasks, minsFromStart) {
+  const items = [];
+  for (const ev of events) {
+    items.push({ id: "e:" + ev.id, sMins: minsFromStart(ev.startIso), eMins: minsFromStart(ev.endIso) });
+  }
+  for (const tk of tasks) {
+    const s = minsFromStart(tk.scheduledFor);
+    items.push({ id: "t:" + tk.id, sMins: s, eMins: s + (tk.estimatedMinutes || 30) });
+  }
+  items.sort((a, b) => a.sMins - b.sMins);
+  const map = new Map();
+  let cluster = [];
+  let clusterEnd = -Infinity;
+  const finalize = () => {
+    if (!cluster.length) return;
+    const colEnds = [];
+    for (const it of cluster) {
+      let placed = false;
+      for (let i = 0; i < colEnds.length; i++) {
+        if (colEnds[i] <= it.sMins) {
+          colEnds[i] = it.eMins;
+          map.set(it.id, { col: i, totalCols: 0 });
+          placed = true; break;
+        }
+      }
+      if (!placed) {
+        colEnds.push(it.eMins);
+        map.set(it.id, { col: colEnds.length - 1, totalCols: 0 });
+      }
+    }
+    const total = colEnds.length;
+    for (const it of cluster) map.get(it.id).totalCols = total;
+    cluster = []; clusterEnd = -Infinity;
+  };
+  for (const it of items) {
+    if (it.sMins >= clusterEnd) finalize();
+    cluster.push(it);
+    clusterEnd = Math.max(clusterEnd, it.eMins);
+  }
+  finalize();
+  return map;
+}
 
-  // All-day strip
-  const allDayEvents = allDayEventsForDay(day);
-  const allDayHost = document.getElementById("all-day-strip");
-  if (allDayEvents.length) {
-    const items = allDayEvents.map(ev => {
-      const stops = CAL_COLORS[ev.colorIdx || 0];
-      const bg = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
-      const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}`;
-      const inner = `${escapeHtml(ev.summary)}`;
-      return ev.url
-        ? `<a class="all-day-item" href="${escapeHtml(ev.url)}" target="_blank" rel="noopener" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</a>`
-        : `<span class="all-day-item no-link" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</span>`;
-    }).join("");
-    allDayHost.innerHTML = `<div class="all-day-label">all day</div><div class="all-day-items">${items}</div>`;
+// Combined column inset for (dayIdx, dayCount) + (subCol, subCount within day).
+function blockColInset(dayIdx, dayCount, subCol, subCount) {
+  if (dayCount === 1 && subCount === 1) return "";
+  const dayBand = 100 / dayCount;
+  const subBand = dayBand / subCount;
+  const leftPct = dayIdx * dayBand + subCol * subBand;
+  return `left:calc(${leftPct}% + 3px);width:calc(${subBand}% - 6px);right:auto;`;
+}
+
+function renderGrid() {
+  const days = getActiveDays();
+  const dayCount = days.length;
+  const isMulti = dayCount > 1;
+
+  // Title — single day or range
+  const first = days[0];
+  const last = days[dayCount - 1];
+  const offset = state.activeDayOffset || 0;
+  if (isMulti) {
+    const a = first.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    const b = last.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    document.getElementById("day-title").textContent = `${a} → ${b}`;
   } else {
-    allDayHost.innerHTML = "";
+    const dayLabel = offset === 0 ? "Today" : offset === 1 ? "Tomorrow"
+      : first.toLocaleDateString([], { weekday: "long" });
+    document.getElementById("day-title").textContent = `${dayLabel} · ${first.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}`;
   }
 
-  const bounds = getDayBounds(day);
+  // Multi-day headers row
+  const mdHeaders = document.getElementById("multi-day-headers");
+  if (isMulti) {
+    mdHeaders.style.display = "grid";
+    mdHeaders.style.gridTemplateColumns = `repeat(${dayCount}, 1fr)`;
+    const todayMs = startOfDay().getTime();
+    mdHeaders.innerHTML = days.map((d, i) => {
+      const off = state.activeDayOffset + i;
+      const isToday = startOfDay(d).getTime() === todayMs;
+      const name = off === 0 ? "Today" : off === 1 ? "Tomorrow" : d.toLocaleDateString([], { weekday: "short" }).toUpperCase();
+      const date = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+      return `<div class="multi-day-header ${isToday ? "is-today" : ""}" data-day-idx="${i}">
+        ${off === 0 || off === 1 ? `<span class="mdh-name">${name}</span>` : ""}
+        <span class="mdh-day">${escapeHtml(date)}</span>
+      </div>`;
+    }).join("");
+    mdHeaders.querySelectorAll(".multi-day-header").forEach(h => {
+      h.addEventListener("click", () => {
+        const idx = parseInt(h.dataset.dayIdx, 10);
+        // Clicking a multi-day header switches to that single day
+        state.viewMode = "day";
+        state.activeDayOffset = (state.activeDayOffset || 0) + idx;
+        saveState(state);
+        applyViewToggle();
+        renderAll();
+      });
+    });
+  } else {
+    mdHeaders.style.display = "none";
+    mdHeaders.innerHTML = "";
+  }
+
+  // All-day strip — single-day or per-day
+  const allDayHost = document.getElementById("all-day-strip");
+  if (isMulti) {
+    // Show all-day events grouped by day, each with a small day prefix
+    const allItems = [];
+    days.forEach((d, i) => {
+      const evs = allDayEventsForDay(d);
+      for (const ev of evs) {
+        allItems.push({ ev, dayIdx: i });
+      }
+    });
+    if (allItems.length) {
+      const html = allItems.map(({ ev, dayIdx }) => {
+        const stops = CAL_COLORS[ev.colorIdx || 0];
+        const bg = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+        const dayName = days[dayIdx].toLocaleDateString([], { weekday: "short" });
+        const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}  (${dayName})`;
+        const inner = `<span style="opacity:0.75;font-size:9px;margin-right:4px;">${dayName.toUpperCase()}</span>${escapeHtml(ev.summary)}`;
+        return ev.url
+          ? `<a class="all-day-item" href="${escapeHtml(ev.url)}" target="_blank" rel="noopener" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</a>`
+          : `<span class="all-day-item no-link" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</span>`;
+      }).join("");
+      allDayHost.innerHTML = `<div class="all-day-label">all day</div><div class="all-day-items">${html}</div>`;
+    } else {
+      allDayHost.innerHTML = "";
+    }
+  } else {
+    const allDayEvents = allDayEventsForDay(first);
+    if (allDayEvents.length) {
+      const items = allDayEvents.map(ev => {
+        const stops = CAL_COLORS[ev.colorIdx || 0];
+        const bg = `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+        const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}`;
+        const inner = `${escapeHtml(ev.summary)}`;
+        return ev.url
+          ? `<a class="all-day-item" href="${escapeHtml(ev.url)}" target="_blank" rel="noopener" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</a>`
+          : `<span class="all-day-item no-link" style="background:${bg};" title="${escapeHtml(tooltip)}">${inner}</span>`;
+      }).join("");
+      allDayHost.innerHTML = `<div class="all-day-label">all day</div><div class="all-day-items">${items}</div>`;
+    } else {
+      allDayHost.innerHTML = "";
+    }
+  }
+
+  // Union bounds across all visible days
+  let startHour = DEFAULT_DAY_START_HOUR;
+  let endHour = DEFAULT_DAY_END_HOUR;
+  for (const d of days) {
+    const b = getDayBounds(d);
+    startHour = Math.min(startHour, b.startHour);
+    endHour = Math.max(endHour, b.endHour);
+  }
+  const bounds = { startHour, endHour };
   const totalMins = (bounds.endHour - bounds.startHour) * 60;
   const totalSlots = totalMins / 15;
   const gridHeight = totalSlots * SLOT_HEIGHT;
@@ -2334,9 +2572,6 @@ function renderGrid() {
   const labelsEl = document.getElementById("hour-labels");
   labelsEl.style.height = gridHeight + "px";
   let labelHtml = "";
-  // Render labels for each hour from startHour through endHour-1.
-  // Skipping the endHour label avoids the bottom clipping (it sits exactly at
-  // the grid edge and would render half-cut).
   for (let h = bounds.startHour; h < bounds.endHour; h++) {
     const top = (h - bounds.startHour) * 4 * SLOT_HEIGHT;
     const displayH = ((h % 24) + 24) % 24;
@@ -2344,150 +2579,119 @@ function renderGrid() {
   }
   labelsEl.innerHTML = labelHtml;
 
-  // Grid blocks
+  // Grid container
   const gridEl = document.getElementById("grid");
   gridEl.style.height = gridHeight + "px";
-  const events = eventsForDay(day);
-  const tasks = tasksForDay(day);
+  if (isMulti) {
+    gridEl.classList.add("multi");
+    gridEl.style.setProperty("--day-count", dayCount);
+  } else {
+    gridEl.classList.remove("multi");
+    gridEl.style.removeProperty("--day-count");
+  }
 
-  const minsFromStart = (iso) => {
-    const d = new Date(iso);
-    const isoDayMs = startOfDay(d).getTime();
-    const viewDayMs = startOfDay(day).getTime();
-    const dayDiff = Math.round((isoDayMs - viewDayMs) / 86400000);
-    const mins = d.getHours() * 60 + d.getMinutes() + dayDiff * 24 * 60;
-    return mins - bounds.startHour * 60;
-  };
   const slotPx = (mins) => Math.max(0, mins / 15) * SLOT_HEIGHT;
-
   let html = "";
 
-  // Now line (only for today)
-  if (offset === 0) {
+  // Now line — only if today is in the visible range
+  const todayMs = startOfDay().getTime();
+  const todayDayIdx = days.findIndex(d => startOfDay(d).getTime() === todayMs);
+  if (todayDayIdx >= 0) {
     const now = new Date();
     const nowMins = now.getHours() * 60 + now.getMinutes() - bounds.startHour * 60;
     if (nowMins >= 0 && nowMins <= totalMins) {
-      html += `<div class="now-line" style="top:${slotPx(nowMins)}px;"></div>`;
+      const dayBand = 100 / dayCount;
+      const lf = todayDayIdx * dayBand;
+      html += `<div class="now-line" style="top:${slotPx(nowMins)}px;left:${lf}%;width:${dayBand}%;"></div>`;
     }
   }
 
-  // ── Overlap layout: when blocks overlap in time, lay them out side-by-side ──
-  const layoutMap = (() => {
-    const items = [];
-    for (const ev of events) {
-      items.push({ id: "e:" + ev.id, sMins: minsFromStart(ev.startIso), eMins: minsFromStart(ev.endIso) });
-    }
-    for (const tk of tasks) {
-      const s = minsFromStart(tk.scheduledFor);
-      items.push({ id: "t:" + tk.id, sMins: s, eMins: s + (tk.estimatedMinutes || 30) });
-    }
-    items.sort((a, b) => a.sMins - b.sMins);
-    const map = new Map();
-    let cluster = [];
-    let clusterEnd = -Infinity;
-    const finalize = () => {
-      if (!cluster.length) return;
-      const colEnds = [];
-      for (const it of cluster) {
-        let placed = false;
-        for (let i = 0; i < colEnds.length; i++) {
-          if (colEnds[i] <= it.sMins) {
-            colEnds[i] = it.eMins;
-            map.set(it.id, { col: i, totalCols: 0 });
-            placed = true; break;
-          }
-        }
-        if (!placed) {
-          colEnds.push(it.eMins);
-          map.set(it.id, { col: colEnds.length - 1, totalCols: 0 });
-        }
-      }
-      const total = colEnds.length;
-      for (const it of cluster) map.get(it.id).totalCols = total;
-      cluster = []; clusterEnd = -Infinity;
+  // Per-day rendering
+  let totalEvents = 0, totalTasks = 0;
+  for (let dayIdx = 0; dayIdx < dayCount; dayIdx++) {
+    const day = days[dayIdx];
+    const events = eventsForDay(day);
+    const tasks = tasksForDay(day);
+    totalEvents += events.length;
+    totalTasks += tasks.length;
+
+    const minsFromStart = (iso) => {
+      const d = new Date(iso);
+      const isoDayMs = startOfDay(d).getTime();
+      const viewDayMs = startOfDay(day).getTime();
+      const dayDiff = Math.round((isoDayMs - viewDayMs) / 86400000);
+      const mins = d.getHours() * 60 + d.getMinutes() + dayDiff * 24 * 60;
+      return mins - bounds.startHour * 60;
     };
-    for (const it of items) {
-      if (it.sMins >= clusterEnd) finalize();
-      cluster.push(it);
-      clusterEnd = Math.max(clusterEnd, it.eMins);
+
+    const layoutMap = computeOverlapLayoutForDay(events, tasks, minsFromStart);
+
+    // Events
+    for (const ev of events) {
+      const sMins = minsFromStart(ev.startIso);
+      const eMins = minsFromStart(ev.endIso);
+      const dur = Math.max(15, eMins - sMins);
+      const top = slotPx(sMins);
+      const height = slotPx(dur) - 2;
+      const layout = layoutMap.get("e:" + ev.id) || { col: 0, totalCols: 1 };
+      const colStyle = blockColInset(dayIdx, dayCount, layout.col, layout.totalCols);
+      const tall = dur >= 45;
+      const medium = dur >= 30 && dur < 45;
+      const short = dur < 30;
+      const showTime = dur >= 30;
+      const tStr = `${fmtTime(ev.startIso)}–${fmtTime(ev.endIso)}`;
+      const evTag = getEventTag(ev.id);
+      const tagBackground = evTag ? tagBg(evTag) : null;
+      const stops = CAL_COLORS[ev.colorIdx || 0];
+      const baseBg = tagBackground || `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
+      const styleBg = `background:${baseBg};`;
+      const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}  (${tStr})${evTag ? "  •  #" + evTag : ""}`;
+      const logged = isEventLogged(ev.id);
+      const evTagChip = evTag ? `<span class="block-tag">${escapeHtml(evTag)}</span>` : "";
+      const calChip = ev.calName ? `<span class="block-cal">${escapeHtml(ev.calName)}</span>` : "";
+      const metaHtml = (evTagChip || calChip) ? `<div class="block-meta">${evTagChip}${calChip}</div>` : "";
+      html += `<div class="block event ${logged ? "logged" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" data-day-idx="${dayIdx}" style="top:${top}px;height:${height}px;${styleBg}${colStyle}" title="${escapeHtml(tooltip)}">
+        <div class="block-check ${logged ? "checked" : ""}" data-action="toggle-event-log" title="${logged ? "Unlog" : "Log for bi-weekly"}"></div>
+        ${showTime ? `<div class="block-time" style="position:relative;z-index:1;">${escapeHtml(tStr)}</div>` : ""}
+        <div class="block-title" style="position:relative;z-index:1;">${escapeHtml(ev.summary)}</div>
+        ${metaHtml}
+      </div>`;
     }
-    finalize();
-    return map;
-  })();
 
-  function colInsetStyle(info) {
-    if (!info || info.totalCols <= 1) return "";
-    const cw = 100 / info.totalCols;
-    const lf = info.col * cw;
-    return `left:calc(${lf}% + 4px);width:calc(${cw}% - 8px);right:auto;`;
-  }
-
-  // Events
-  for (const ev of events) {
-    const sMins = minsFromStart(ev.startIso);
-    const eMins = minsFromStart(ev.endIso);
-    const dur = Math.max(15, eMins - sMins);
-    const top = slotPx(sMins);
-    const height = slotPx(dur) - 2;
-    const colStyle = colInsetStyle(layoutMap.get("e:" + ev.id));
-    const tall = dur >= 45;
-    const medium = dur >= 30 && dur < 45;
-    const short = dur < 30;
-    const showTime = dur >= 30;
-    const tStr = `${fmtTime(ev.startIso)}–${fmtTime(ev.endIso)}`;
-    // Tag color overrides calendar color when an event has a tag
-    const evTag = getEventTag(ev.id);
-    const tagBackground = evTag ? tagBg(evTag) : null;
-    const stops = CAL_COLORS[ev.colorIdx || 0];
-    const baseBg = tagBackground || `linear-gradient(135deg,${stops[0]} 0%,${stops[1]} 100%)`;
-    const styleBg = `background:${baseBg};`;
-    const tooltip = `${ev.summary}${ev.calName ? "  •  " + ev.calName : ""}  (${tStr})${evTag ? "  •  #" + evTag : ""}`;
-    const logged = isEventLogged(ev.id);
-    const evTagChip = evTag ? `<span class="block-tag">${escapeHtml(evTag)}</span>` : "";
-    const calChip = ev.calName ? `<span class="block-cal">${escapeHtml(ev.calName)}</span>` : "";
-    const metaHtml = (evTagChip || calChip) ? `<div class="block-meta">${evTagChip}${calChip}</div>` : "";
-    html += `<div class="block event ${logged ? "logged" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" style="top:${top}px;height:${height}px;${styleBg}${colStyle}" title="${escapeHtml(tooltip)}">
-      <div class="block-check ${logged ? "checked" : ""}" data-action="toggle-event-log" title="${logged ? "Unlog" : "Log for bi-weekly"}"></div>
-      ${showTime ? `<div class="block-time" style="position:relative;z-index:1;">${escapeHtml(tStr)}</div>` : ""}
-      <div class="block-title" style="position:relative;z-index:1;">${escapeHtml(ev.summary)}</div>
-      ${metaHtml}
-    </div>`;
-  }
-
-  // Tasks
-  for (const tk of tasks) {
-    const sMins = minsFromStart(tk.scheduledFor);
-    const dur = tk.estimatedMinutes || 30;
-    const top = slotPx(sMins);
-    const height = slotPx(dur) - 2;
-    const colStyle = colInsetStyle(layoutMap.get("t:" + tk.id));
-    const tall = dur >= 45;
-    const medium = dur >= 30 && dur < 45;
-    const short = dur < 30;
-    const showTime = dur >= 30;
-    const isDone = tk.status === "done";
-    // No overdue treatment — past-time tasks just look like normal tasks.
-    const overdue = false;
-    const startMs = new Date(tk.scheduledFor).getTime();
-    const endMs = startMs + dur * 60000;
-    const tStr = `${fmtTime(tk.scheduledFor)}–${fmtTime(new Date(endMs).toISOString())}`;
-    // Tag color always applies (overdue shows as a red ring; done fades opacity)
-    const customBg = tagBg(tk.tag);
-    const styleBg = customBg ? `background:${customBg};` : "";
-    const tagChip = tk.tag ? `<span class="block-tag">${escapeHtml(tk.tag)}</span>` : "";
-    const metaHtml = tagChip ? `<div class="block-meta">${tagChip}</div>` : "";
-    html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}${colStyle}">
-      <div class="block-resize" data-resize="top"></div>
-      <div class="block-check" data-action="toggle-done" title="${isDone ? "Mark not done" : "Mark done"}"></div>
-      ${showTime ? `<div class="block-time">${escapeHtml(tStr)}</div>` : ""}
-      <div class="block-title">${escapeHtml(tk.text)}</div>
-      ${metaHtml}
-      <div class="block-resize" data-resize="bottom"></div>
-    </div>`;
+    // Tasks
+    for (const tk of tasks) {
+      const sMins = minsFromStart(tk.scheduledFor);
+      const dur = tk.estimatedMinutes || 30;
+      const top = slotPx(sMins);
+      const height = slotPx(dur) - 2;
+      const layout = layoutMap.get("t:" + tk.id) || { col: 0, totalCols: 1 };
+      const colStyle = blockColInset(dayIdx, dayCount, layout.col, layout.totalCols);
+      const tall = dur >= 45;
+      const medium = dur >= 30 && dur < 45;
+      const short = dur < 30;
+      const showTime = dur >= 30;
+      const isDone = tk.status === "done";
+      const overdue = false;
+      const startMs = new Date(tk.scheduledFor).getTime();
+      const endMs = startMs + dur * 60000;
+      const tStr = `${fmtTime(tk.scheduledFor)}–${fmtTime(new Date(endMs).toISOString())}`;
+      const customBg = tagBg(tk.tag);
+      const styleBg = customBg ? `background:${customBg};` : "";
+      const tagChip = tk.tag ? `<span class="block-tag">${escapeHtml(tk.tag)}</span>` : "";
+      const metaHtml = tagChip ? `<div class="block-meta">${tagChip}</div>` : "";
+      html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-day-idx="${dayIdx}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}${colStyle}">
+        <div class="block-resize" data-resize="top"></div>
+        <div class="block-check" data-action="toggle-done" title="${isDone ? "Mark not done" : "Mark done"}"></div>
+        ${showTime ? `<div class="block-time">${escapeHtml(tStr)}</div>` : ""}
+        <div class="block-title">${escapeHtml(tk.text)}</div>
+        ${metaHtml}
+        <div class="block-resize" data-resize="bottom"></div>
+      </div>`;
+    }
   }
 
   gridEl.innerHTML = html;
-  document.getElementById("day-meta").textContent = `${tasks.length} task${tasks.length === 1 ? "" : "s"} · ${events.length} event${events.length === 1 ? "" : "s"}`;
+  document.getElementById("day-meta").textContent = `${totalTasks} task${totalTasks === 1 ? "" : "s"} · ${totalEvents} event${totalEvents === 1 ? "" : "s"}`;
 
   // Wire event-block log checkboxes + click-to-edit
   gridEl.querySelectorAll(".block.event").forEach(b => {
@@ -2535,8 +2739,18 @@ function renderGrid() {
       startBlockDrag(e, b, kind);
     });
   });
-  // Save grid context for persistent listeners
-  gridEl._dayCtx = { day, startHour: bounds.startHour };
+  // Save grid context for persistent listeners (now multi-day-aware)
+  gridEl._dayCtx = {
+    days,
+    dayCount,
+    startHour: bounds.startHour,
+    // Helper: given a clientX position relative to the grid, return the day at that column
+    dayFromX(xWithinGrid, gridWidth) {
+      if (gridWidth <= 0) return days[0];
+      const idx = Math.max(0, Math.min(dayCount - 1, Math.floor((xWithinGrid / gridWidth) * dayCount)));
+      return days[idx];
+    },
+  };
 }
 
 // ---------- Mouse-based drag/resize for blocks ----------
@@ -2648,7 +2862,10 @@ function onBlockMouseUp(e) {
   if (p.kind === "move" || p.kind === "resize-top") {
     const minutesFromGridStart = (newTop / SLOT_HEIGHT) * 15;
     const totalMins = ctx.startHour * 60 + minutesFromGridStart;
-    const newStart = new Date(ctx.day);
+    // Keep the block on its own day (multi-day cross-column drag is not yet supported)
+    const dayIdx = parseInt(p.block.dataset.dayIdx, 10) || 0;
+    const day = (ctx.days && ctx.days[dayIdx]) || (ctx.days && ctx.days[0]) || startOfDay();
+    const newStart = new Date(day);
     newStart.setHours(0,0,0,0);
     newStart.setMinutes(totalMins);
     t.scheduledFor = newStart.toISOString();
@@ -2726,9 +2943,11 @@ function wireGridListeners() {
     if (!ctx) return;
     const rect = gridEl.getBoundingClientRect();
     const y = e.clientY - rect.top;
+    const x = e.clientX - rect.left;
+    const day = ctx.dayFromX(x, rect.width);
     const slotIdx = Math.max(0, Math.floor(y / SLOT_HEIGHT));
     const clickMins = ctx.startHour * 60 + slotIdx * 15;
-    const clickTime = new Date(ctx.day);
+    const clickTime = new Date(day);
     clickTime.setHours(0, 0, 0, 0);
     clickTime.setMinutes(clickMins);
     openNewTaskPopover(e.clientX, e.clientY, clickTime);
@@ -2890,8 +3109,10 @@ function paintGhost(atTime, durMin, isEvent) {
   const gridEl = document.getElementById("grid");
   const ctx = gridEl && gridEl._dayCtx;
   if (!ctx) return;
-  // Only show ghost if the time is on the currently-displayed day
-  if (!isSameDay(atTime, ctx.day)) return;
+  // Find the day index in the visible days
+  const dayIdx = ctx.days.findIndex(d => isSameDay(atTime, d));
+  if (dayIdx < 0) return; // not on a visible day
+  const dayCount = ctx.dayCount;
   const minsFromStart = (atTime.getHours() * 60 + atTime.getMinutes()) - ctx.startHour * 60;
   if (minsFromStart < 0) return;
   const top = (minsFromStart / 15) * SLOT_HEIGHT;
@@ -2902,6 +3123,12 @@ function paintGhost(atTime, durMin, isEvent) {
   ghostBlock.className = `block ghost ${isEvent ? "ghost-event" : ""} ${durMin >= 45 ? "tall" : durMin >= 30 ? "medium" : "short"}`;
   ghostBlock.style.top = top + "px";
   ghostBlock.style.height = height + "px";
+  if (dayCount > 1) {
+    const dayBand = 100 / dayCount;
+    ghostBlock.style.left = `calc(${dayIdx * dayBand}% + 4px)`;
+    ghostBlock.style.width = `calc(${dayBand}% - 8px)`;
+    ghostBlock.style.right = "auto";
+  }
   ghostBlock.innerHTML = `
     ${durMin >= 30 ? `<div class="block-time">${escapeHtml(startStr)}–${escapeHtml(endStr)}</div>` : ""}
     <div class="block-title">+ new ${isEvent ? "event" : "task"}</div>`;
@@ -3578,6 +3805,7 @@ function renderAll() {
   renderInbox();
   renderGrid();
   renderDone();
+  if (typeof applyViewToggle === "function") applyViewToggle();
 }
 
 // ---------- Calendar picker ----------
@@ -3762,6 +3990,35 @@ function expandColorGrid(dotBtn) {
 }
 
 document.getElementById("cal-picker-btn").addEventListener("click", openCalendarPicker);
+
+// ---------- View mode toggle (Day / Multi) ----------
+function applyViewToggle() {
+  const dayBtn = document.getElementById("vt-day");
+  const multiBtn = document.getElementById("vt-multi");
+  const countSpan = document.getElementById("vt-count");
+  if (!dayBtn || !multiBtn) return;
+  dayBtn.classList.toggle("active", state.viewMode !== "multi");
+  multiBtn.classList.toggle("active", state.viewMode === "multi");
+  if (countSpan) countSpan.textContent = state.multiDays || 3;
+}
+document.getElementById("vt-day").addEventListener("click", () => {
+  state.viewMode = "day";
+  saveState(state);
+  applyViewToggle();
+  renderAll();
+});
+document.getElementById("vt-multi").addEventListener("click", () => {
+  if (state.viewMode === "multi") {
+    const cycle = { 3: 5, 5: 7, 7: 3 };
+    state.multiDays = cycle[state.multiDays || 3] || 3;
+  } else {
+    state.viewMode = "multi";
+    state.multiDays = state.multiDays || 3;
+  }
+  saveState(state);
+  applyViewToggle();
+  renderAll();
+});
 
 // ---------- Backup / Restore (full data set) ----------
 function exportAllData() {
