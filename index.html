@@ -1353,9 +1353,10 @@
     const btn = document.getElementById("auth-btn");
     const status = document.getElementById("auth-status");
     const configWarn = document.getElementById("auth-config-warn");
-    overlay.classList.add("show");
+    // Don't show overlay yet — only flash it if we genuinely need manual sign-in.
 
     if (GOOGLE_CLIENT_ID.startsWith("YOUR_CLIENT_ID")) {
+      overlay.classList.add("show");
       btn.disabled = true;
       configWarn.style.display = "block";
       return;
@@ -1674,14 +1675,26 @@
     }
   }
 
+  function showOverlay() {
+    overlay.classList.add("show");
+  }
+
   async function start() {
-    setStatus("Loading Google libraries…");
+    // Don't show the overlay yet. Try every silent path first; only show
+    // the sign-in card if we genuinely need manual interaction.
     try {
       await Promise.all([initGapi(), initGis()]);
     } catch (e) {
+      showOverlay();
       setStatus("Couldn't load Google scripts: " + e.message, true);
       return;
     }
+
+    // Wire the button now (it'll only be shown if we actually fall back to it)
+    btn.addEventListener("click", () => {
+      setStatus("Opening Google sign-in…");
+      tokenClient.requestAccessToken({ prompt: "consent" });
+    });
 
     tokenClient = makeTokenClient(
       () => {
@@ -1689,29 +1702,29 @@
         overlay.classList.remove("show");
         setupDriveSync();
       },
-      (err) => setStatus("Sign-in failed: " + err, true),
+      (err) => {
+        // Silent failed → now we surface the overlay for manual sign-in
+        showOverlay();
+        setStatus("Sign-in needed — click the button below.", true);
+      },
     );
 
-    // Try silent re-auth using stored token
+    // 1) If we have a stored token, try it immediately (no overlay)
     const stored = loadStoredToken();
     if (stored) {
       gapi.client.setToken({ access_token: stored.accessToken });
       installAdapter();
-      overlay.classList.remove("show");
       setupDriveSync();
       return;
     }
 
-    setStatus("");
-    btn.addEventListener("click", () => {
-      setStatus("Opening Google sign-in…");
-      tokenClient.requestAccessToken({ prompt: "consent" });
-    });
-
-    // Auto-attempt silent sign-in (works if user is signed into Google in the browser)
-    setTimeout(() => {
-      try { tokenClient.requestAccessToken({ prompt: "" }); } catch {}
-    }, 200);
+    // 2) No stored token — try silent re-auth without showing overlay.
+    //    GIS will use the user's existing Google session if available.
+    try { tokenClient.requestAccessToken({ prompt: "" }); }
+    catch {
+      showOverlay();
+      setStatus("");
+    }
   }
 
   // Sign-out helper exposed globally for the footer button
