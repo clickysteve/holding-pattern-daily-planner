@@ -141,6 +141,47 @@
   }
 
   /* --- Day tabs --- */
+  .day-tabs-wrap {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .day-tabs-wrap .day-tabs {
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 0;
+  }
+  .day-arrow {
+    flex: 0 0 auto;
+    background: transparent;
+    border: 1.5px solid var(--border);
+    color: var(--text-muted);
+    border-radius: 10px;
+    width: 36px;
+    min-height: 56px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 600;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+    user-select: none;
+  }
+  .day-arrow:hover:not(:disabled) {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--accent-strong);
+  }
+  .day-arrow:active:not(:disabled) { transform: scale(0.94); }
+  .day-arrow:disabled {
+    opacity: 0.32;
+    cursor: not-allowed;
+  }
   .day-tabs {
     display: flex;
     gap: 4px;
@@ -1248,7 +1289,11 @@
     </div>
   </header>
 
-  <div class="day-tabs" id="day-tabs"></div>
+  <div class="day-tabs-wrap">
+    <button class="day-arrow" id="day-arrow-prev" aria-label="Previous day">‹</button>
+    <div class="day-tabs" id="day-tabs"></div>
+    <button class="day-arrow" id="day-arrow-next" aria-label="Next day">›</button>
+  </div>
 
   <section class="inbox-panel">
     <div class="capture-input-wrap">
@@ -2275,6 +2320,12 @@ function renderDayTabs() {
       renderGrid();
     });
   });
+  // Sync prev/next click-arrow disabled state with where we are in the week.
+  const prevBtn = document.getElementById("day-arrow-prev");
+  const nextBtn = document.getElementById("day-arrow-next");
+  const cur = state.activeDayOffset || 0;
+  if (prevBtn) prevBtn.disabled = cur <= 0;
+  if (nextBtn) nextBtn.disabled = cur >= 6;
 }
 
 // ---------- Render: inbox ----------
@@ -3099,16 +3150,30 @@ document.addEventListener("keydown", (e) => {
     const ae = document.activeElement;
     if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT" || ae.isContentEditable)) return;
     e.preventDefault();
-    const cur = state.activeDayOffset || 0;
-    const next = e.key === "ArrowRight" ? Math.min(6, cur + 1) : Math.max(0, cur - 1);
-    if (next === cur) return;
-    state.activeDayOffset = next;
-    saveState(state);
-    renderDayTabs();
-    renderGrid();
-    renderPageMonth();
+    shiftActiveDay(e.key === "ArrowRight" ? 1 : -1);
   }
 });
+
+// Shared helper: shift the active day window by +/-1 (used by keyboard arrows,
+// swipe, and the click-arrow buttons either side of the day tabs).
+function shiftActiveDay(delta) {
+  const cur = state.activeDayOffset || 0;
+  const next = Math.max(0, Math.min(6, cur + delta));
+  if (next === cur) return;
+  state.activeDayOffset = next;
+  saveState(state);
+  renderDayTabs();
+  renderGrid();
+  renderPageMonth();
+}
+
+// Click-arrow buttons either side of the day tabs (single + multi-day).
+{
+  const prevBtn = document.getElementById("day-arrow-prev");
+  const nextBtn = document.getElementById("day-arrow-next");
+  if (prevBtn) prevBtn.addEventListener("click", () => shiftActiveDay(-1));
+  if (nextBtn) nextBtn.addEventListener("click", () => shiftActiveDay(1));
+}
 
 // ---------- Touch swipe between days (left/right) ----------
 let swipeStart = null;
