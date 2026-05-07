@@ -3080,6 +3080,19 @@ document.addEventListener("keydown", (e) => {
     if (cap) cap.focus();
     return;
   }
+  // Backspace / Delete = delete the task/event whose editor popover is open
+  if (e.key === "Backspace" || e.key === "Delete") {
+    if (!activePopover) return;
+    const ae = document.activeElement;
+    // Don't hijack the keystroke when the user is typing in a field
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT" || ae.isContentEditable)) return;
+    const delBtn = activePopover.querySelector("#ep-del, #ev-del");
+    if (delBtn) {
+      e.preventDefault();
+      delBtn.click();
+    }
+    return;
+  }
   // Left/Right arrows navigate between days (single-day or multi-day)
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
     if (activePopover) return;
