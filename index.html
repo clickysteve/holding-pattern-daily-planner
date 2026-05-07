@@ -3384,7 +3384,10 @@ function openNewTaskPopover(x, y, atTime) {
       <input class="pop-input" id="np-end" type="time" value="${escapeHtml(fmtTime(new Date(atTime.getTime() + 30 * 60000).toISOString()))}" step="900" style="max-width:110px;" />
     </div>
     <div class="pop-row" style="gap:8px;align-items:center;">
-      <span class="pop-dur-label">Duration <span class="pop-dur-current" id="np-dur-current">30m</span></span>
+      <span class="pop-dur-label">Duration</span>
+      <input class="pop-input" id="np-dur-num" type="number" min="15" step="15" max="1440" value="30" style="width:78px;text-align:center;" />
+      <span style="color:var(--text-muted);font-size:11px;">min</span>
+      <span class="pop-dur-label" style="margin-left:auto;font-size:10px;opacity:0.6;">presets:</span>
     </div>
     <div class="pop-row dur-pick">
       <button type="button" data-dur="15">15m</button>
@@ -3439,7 +3442,8 @@ function openNewTaskPopover(x, y, atTime) {
   });
   function refreshNpDur() {
     pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === dur));
-    pop.querySelector("#np-dur-current").textContent = dur + "m";
+    const numEl = pop.querySelector("#np-dur-num");
+    if (numEl && document.activeElement !== numEl) numEl.value = dur;
     // Sync end time input
     const startTime = pop.querySelector("#np-time").value;
     if (startTime) {
@@ -3450,6 +3454,14 @@ function openNewTaskPopover(x, y, atTime) {
       pop.querySelector("#np-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
     }
   }
+  // Direct duration number input on the new-task popover
+  pop.querySelector("#np-dur-num").addEventListener("change", (e) => {
+    const v = parseInt(e.target.value, 10);
+    if (isNaN(v)) return;
+    dur = Math.max(15, Math.round(v / 15) * 15);
+    refreshNpDur();
+    paintGhost(atTime, dur, mode === "event");
+  });
   pop.querySelectorAll(".dur-pick button").forEach(b => {
     b.addEventListener("click", () => {
       dur = parseInt(b.dataset.dur, 10);
@@ -3586,7 +3598,10 @@ function openTaskPopover(blockEl, id) {
       <input class="pop-input" id="ep-end" type="time" value="${escapeHtml(endStr)}" step="900" style="max-width:110px;" />
     </div>
     <div class="pop-row" style="gap:8px;align-items:center;">
-      <span class="pop-dur-label">Duration <span class="pop-dur-current" id="ep-dur-current">${dur}m</span></span>
+      <span class="pop-dur-label">Duration</span>
+      <input class="pop-input" id="ep-dur-num" type="number" min="15" step="15" max="1440" value="${dur}" style="width:78px;text-align:center;" />
+      <span style="color:var(--text-muted);font-size:11px;">min</span>
+      <span class="pop-dur-label" style="margin-left:auto;font-size:10px;opacity:0.6;">presets:</span>
     </div>
     <div class="pop-row dur-pick">
       <button type="button" data-dur="15" ${dur===15?"class='active'":""}>15m</button>
@@ -3608,7 +3623,8 @@ function openTaskPopover(blockEl, id) {
   let newDur = dur;
   function refreshEpDur() {
     pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === newDur));
-    pop.querySelector("#ep-dur-current").textContent = newDur + "m";
+    const numEl = pop.querySelector("#ep-dur-num");
+    if (numEl && document.activeElement !== numEl) numEl.value = newDur;
     // Sync end time input
     const startTime = pop.querySelector("#ep-time").value;
     if (startTime) {
@@ -3619,6 +3635,16 @@ function openTaskPopover(blockEl, id) {
       pop.querySelector("#ep-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
     }
   }
+  // Direct duration number input
+  pop.querySelector("#ep-dur-num").addEventListener("change", (e) => {
+    const v = parseInt(e.target.value, 10);
+    if (isNaN(v)) return;
+    newDur = Math.max(15, Math.round(v / 15) * 15);
+    t.estimatedMinutes = newDur;
+    saveStore(arr);
+    refreshEpDur();
+    renderGrid();
+  });
   pop.querySelectorAll(".dur-pick button").forEach(b => {
     b.addEventListener("click", () => {
       newDur = parseInt(b.dataset.dur, 10);
@@ -3744,7 +3770,10 @@ function openEventPopover(blockEl, ev) {
       <input class="pop-input" id="ev-end" type="time" value="${escapeHtml(fmtTime(new Date(new Date(ev.startIso).getTime() + dur * 60000).toISOString()))}" step="900" style="max-width:110px;" />
     </div>
     <div class="pop-row" style="gap:8px;align-items:center;">
-      <span class="pop-dur-label">Duration <span class="pop-dur-current" id="ev-dur-current">${dur}m</span></span>
+      <span class="pop-dur-label">Duration</span>
+      <input class="pop-input" id="ev-dur-num" type="number" min="15" step="15" max="1440" value="${dur}" style="width:78px;text-align:center;" />
+      <span style="color:var(--text-muted);font-size:11px;">min</span>
+      <span class="pop-dur-label" style="margin-left:auto;font-size:10px;opacity:0.6;">presets:</span>
     </div>
     <div class="pop-row dur-pick">
       <button type="button" data-dur="15" ${dur===15?"class='active'":""}>15m</button>
@@ -3823,7 +3852,8 @@ function openEventPopover(blockEl, ev) {
 
   function refreshEvDur() {
     pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === pendingDur));
-    pop.querySelector("#ev-dur-current").textContent = pendingDur + "m";
+    const numEl = pop.querySelector("#ev-dur-num");
+    if (numEl && document.activeElement !== numEl) numEl.value = pendingDur;
     const startTime = pop.querySelector("#ev-time").value;
     if (startTime) {
       const [h, m] = startTime.split(":").map(Number);
@@ -3833,6 +3863,16 @@ function openEventPopover(blockEl, ev) {
       pop.querySelector("#ev-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
     }
   }
+  // Direct duration number input
+  pop.querySelector("#ev-dur-num").addEventListener("change", (e) => {
+    const v = parseInt(e.target.value, 10);
+    if (isNaN(v)) return;
+    pendingDur = Math.max(15, Math.round(v / 15) * 15);
+    refreshEvDur();
+    const newStart = new Date(ev.startIso);
+    const newEnd = new Date(newStart.getTime() + pendingDur * 60000);
+    saveUpdate({ startTime: newStart.toISOString(), endTime: newEnd.toISOString() });
+  });
   // Duration buttons — save on change
   pop.querySelectorAll(".dur-pick button").forEach(b => {
     b.addEventListener("click", () => {
