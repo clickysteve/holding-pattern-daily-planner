@@ -3886,7 +3886,15 @@ function openEventPopover(blockEl, ev) {
       loadCalendar().then(() => { renderGrid(); renderDayTabs(); });
       setTimeout(() => { if (mySeq === saveSeq) setStatus(""); }, 1500);
     } catch (e) {
-      console.warn("[planner] update_event failed", e);
+      // Log every angle of the error — message, stack, full object, and the
+      // params we sent — so that next time this fires we can see exactly which
+      // field the API choked on without expanding any objects.
+      console.warn("[planner] update_event failed");
+      console.warn("  message:", e && e.message);
+      console.warn("  stack:", e && e.stack);
+      try { console.warn("  error JSON:", JSON.stringify(e, Object.getOwnPropertyNames(e || {}))); } catch (_) {}
+      try { console.warn("  params:", JSON.stringify(params)); } catch (_) {}
+      console.warn("  raw error:", e);
       setStatus("Save failed: " + (e && e.message ? e.message : "see console"), true);
     }
   }
