@@ -141,46 +141,57 @@
   }
 
   /* --- Day tabs --- */
-  .day-tabs-wrap {
-    display: flex;
-    align-items: stretch;
-    gap: 6px;
-    margin-bottom: 14px;
-  }
-  .day-tabs-wrap .day-tabs {
-    margin-bottom: 0;
-    flex: 1;
-    min-width: 0;
+  /* Floating prev/next chevrons that flank the timeline. The overlay is sticky
+     and zero-height so it follows page scroll without pushing the grid down;
+     the buttons inside are absolutely positioned to its left and right edges. */
+  .day-arrow-overlay {
+    position: sticky;
+    top: 38vh;
+    z-index: 5;
+    height: 0;
+    pointer-events: none; /* the wrapper is invisible — only the buttons take clicks */
   }
   .day-arrow {
-    flex: 0 0 auto;
-    background: transparent;
+    pointer-events: auto;
+    position: absolute;
+    top: 0;
+    background: rgba(20, 20, 24, 0.78);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     border: 1.5px solid var(--border);
     color: var(--text-muted);
-    border-radius: 10px;
-    width: 36px;
-    min-height: 56px;
+    border-radius: 999px;
+    width: 38px;
+    height: 56px;
     cursor: pointer;
     font-family: inherit;
-    font-size: 22px;
+    font-size: 24px;
     line-height: 1;
     font-weight: 600;
-    padding: 0;
+    padding: 0 0 2px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.12s;
+    transition: opacity 0.12s, color 0.12s, border-color 0.12s, transform 0.1s, background-color 0.12s;
     user-select: none;
+    opacity: 0.55;
   }
+  .day-arrow.day-arrow-left  { left: 4px; }
+  .day-arrow.day-arrow-right { right: 4px; }
+  .grid-wrap:hover .day-arrow { opacity: 0.9; }
   .day-arrow:hover:not(:disabled) {
-    background: var(--surface);
-    color: var(--text);
+    opacity: 1;
+    color: var(--accent);
     border-color: var(--accent-strong);
+    background: rgba(20, 20, 24, 0.9);
   }
-  .day-arrow:active:not(:disabled) { transform: scale(0.94); }
+  .day-arrow:active:not(:disabled) { transform: scale(0.92); }
   .day-arrow:disabled {
-    opacity: 0.32;
+    opacity: 0.18;
     cursor: not-allowed;
+  }
+  @media (max-width: 700px) {
+    .day-arrow { width: 34px; height: 50px; font-size: 22px; }
   }
   .day-tabs {
     display: flex;
@@ -434,7 +445,8 @@
     position: relative;
     border-top: 1px solid var(--border);
     margin-top: 4px;
-    overflow: hidden;
+    /* overflow: visible — was hidden, switched so position:sticky on the
+       day-arrow overlay tracks page scroll instead of being clipped. */
   }
   .grid {
     position: relative;
@@ -1289,11 +1301,7 @@
     </div>
   </header>
 
-  <div class="day-tabs-wrap">
-    <button class="day-arrow" id="day-arrow-prev" aria-label="Previous day">‹</button>
-    <div class="day-tabs" id="day-tabs"></div>
-    <button class="day-arrow" id="day-arrow-next" aria-label="Next day">›</button>
-  </div>
+  <div class="day-tabs" id="day-tabs"></div>
 
   <section class="inbox-panel">
     <div class="capture-input-wrap">
@@ -1329,6 +1337,10 @@
     <div class="multi-day-headers" id="multi-day-headers" style="display:none;"></div>
     <div class="all-day-strip" id="all-day-strip"></div>
     <div class="grid-wrap">
+      <div class="day-arrow-overlay">
+        <button class="day-arrow day-arrow-left" id="day-arrow-prev" aria-label="Previous day">‹</button>
+        <button class="day-arrow day-arrow-right" id="day-arrow-next" aria-label="Next day">›</button>
+      </div>
       <div class="hour-labels" id="hour-labels"></div>
       <div class="grid" id="grid"></div>
     </div>
