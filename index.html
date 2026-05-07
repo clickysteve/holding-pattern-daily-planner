@@ -3863,40 +3863,79 @@ function openEventPopover(blockEl, ev) {
   };
 
   let pendingDur = dur;
-  let saveSeq = 0; // race-control: ignore stale responses
+  let saveSeq = 0;          // race-control: ignore stale responses
+  let pendingUpdates = {};  // accumulated diff while debounce timer is running
+  let debounceTimer = null;
+  const DEBOUNCE_MS = 450;  // keystrokes / quick toggles inside this window collapse into one PATCH
 
-  async function saveUpdate(updates) {
+  // Detect Google's 403 rateLimitExceeded so we can back off instead of giving up.
+  function isRateLimitError(e) {
+    if (!e) return false;
+    if (e.status === 403 || e.status === 429) return true;
+    const body = e.body || (e.result && e.result.error);
+    const txt = typeof body === "string" ? body : JSON.stringify(body || "");
+    return /rateLimitExceeded|userRateLimitExceeded|Rate Limit Exceeded/i.test(txt);
+  }
+
+  // Actual network call, with up to 4 retries on rate-limit errors.
+  async function flushSave(updates) {
     const params = { eventId: ev.id, ...updates };
     if (ev.calId) params.calendarId = ev.calId;
     setStatus("Saving…");
     const mySeq = ++saveSeq;
-    try {
-      const res = await window.cowork.callMcpTool(
-        "mcp__3a0189ff-940c-477d-967e-015cea265140__update_event", params
-      );
-      console.log("[planner] update_event response:", res);
-      if (mySeq !== saveSeq) return; // a newer save happened
-      setStatus("Saved");
-      // Apply locally so UI doesn't wait for the refetch
-      if (updates.summary) ev.summary = updates.summary;
-      if (updates.startTime) ev.startIso = updates.startTime;
-      if (updates.endTime) ev.endIso = updates.endTime;
-      renderGrid();
-      // Re-fetch in the background to stay consistent
-      loadCalendar().then(() => { renderGrid(); renderDayTabs(); });
-      setTimeout(() => { if (mySeq === saveSeq) setStatus(""); }, 1500);
-    } catch (e) {
-      // Log every angle of the error — message, stack, full object, and the
-      // params we sent — so that next time this fires we can see exactly which
-      // field the API choked on without expanding any objects.
-      console.warn("[planner] update_event failed");
-      console.warn("  message:", e && e.message);
-      console.warn("  stack:", e && e.stack);
-      try { console.warn("  error JSON:", JSON.stringify(e, Object.getOwnPropertyNames(e || {}))); } catch (_) {}
-      try { console.warn("  params:", JSON.stringify(params)); } catch (_) {}
-      console.warn("  raw error:", e);
-      setStatus("Save failed: " + (e && e.message ? e.message : "see console"), true);
+    const TOOL = "mcp__3a0189ff-940c-477d-967e-015cea265140__update_event";
+    let attempt = 0;
+    let lastErr = null;
+    while (attempt < 4) {
+      try {
+        const res = await window.cowork.callMcpTool(TOOL, params);
+        console.log("[planner] update_event response:", res);
+        if (mySeq !== saveSeq) return; // a newer save raced ahead — drop this result
+        setStatus("Saved");
+        if (updates.summary) ev.summary = updates.summary;
+        if (updates.startTime) ev.startIso = updates.startTime;
+        if (updates.endTime) ev.endIso = updates.endTime;
+        renderGrid();
+        loadCalendar().then(() => { renderGrid(); renderDayTabs(); });
+        setTimeout(() => { if (mySeq === saveSeq) setStatus(""); }, 1500);
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (!isRateLimitError(e) || attempt === 3) break;
+        const backoff = 600 * Math.pow(2, attempt) + Math.floor(Math.random() * 250); // 600/1200/2400ms + jitter
+        console.warn(`[planner] update_event 403 rate-limited, retrying in ${backoff}ms (attempt ${attempt + 1}/3)`);
+        setStatus(`Rate-limited, retrying in ${Math.round(backoff / 100) / 10}s…`);
+        await new Promise(r => setTimeout(r, backoff));
+        attempt++;
+      }
     }
+    // Out of retries (or non-retriable error) — log everything we know.
+    if (mySeq !== saveSeq) return; // a newer save already overtook us
+    const e = lastErr;
+    console.warn("[planner] update_event failed");
+    console.warn("  message:", e && e.message);
+    console.warn("  stack:", e && e.stack);
+    try { console.warn("  error JSON:", JSON.stringify(e, Object.getOwnPropertyNames(e || {}))); } catch (_) {}
+    try { console.warn("  params:", JSON.stringify(params)); } catch (_) {}
+    console.warn("  raw error:", e);
+    const friendly = isRateLimitError(e)
+      ? "Rate-limited by Google — try again in a sec."
+      : (e && e.message ? e.message : "see console");
+    setStatus("Save failed: " + friendly, true);
+  }
+
+  // Public entry point — coalesce rapid changes (Day + Time + Duration in the
+  // same popover interaction) into one merged PATCH after DEBOUNCE_MS quiet.
+  function saveUpdate(updates) {
+    Object.assign(pendingUpdates, updates);
+    setStatus("Saving…");
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      const merged = pendingUpdates;
+      pendingUpdates = {};
+      debounceTimer = null;
+      flushSave(merged);
+    }, DEBOUNCE_MS);
   }
 
   // Title — save on blur
