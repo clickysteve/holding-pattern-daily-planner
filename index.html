@@ -803,6 +803,29 @@
     justify-content: flex-end;
     gap: 8px;
   }
+
+  /* Confirmation toast (URL capture, etc.) */
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--surface-2);
+    border: 1.5px solid var(--accent-strong);
+    color: var(--text);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    z-index: 400;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    max-width: min(80vw, 480px);
+    text-align: center;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .pop-dur-label {
     color: var(--text-muted);
     font-size: 11px;
@@ -4365,26 +4388,95 @@ function renderDone() {
 }
 
 // ---------- Capture ----------
+// Shared by the capture bar, the ?add= URL param, and the PWA share target.
+function addTaskFromText(rawText) {
+  const parsed = parseCapture(rawText);
+  if (!parsed.text) return null;
+  if (parsed.tag) ensureTag(parsed.tag);
+  const arr = loadStore();
+  const task = {
+    id: uid(), text: parsed.text,
+    status: parsed.scheduledFor ? "scheduled" : "inbox",
+    scheduledFor: parsed.scheduledFor,
+    estimatedMinutes: parsed.estimatedMinutes,
+    tag: parsed.tag || null,
+    createdAt: new Date().toISOString(), completedAt: null,
+  };
+  arr.push(task);
+  saveStore(arr);
+  return task;
+}
+
 const captureInput = document.getElementById("capture");
 captureInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && captureInput.value.trim()) {
-    const parsed = parseCapture(captureInput.value);
-    if (!parsed.text) return;
-    if (parsed.tag) ensureTag(parsed.tag);
-    const arr = loadStore();
-    arr.push({
-      id: uid(), text: parsed.text,
-      status: parsed.scheduledFor ? "scheduled" : "inbox",
-      scheduledFor: parsed.scheduledFor,
-      estimatedMinutes: parsed.estimatedMinutes,
-      tag: parsed.tag || null,
-      createdAt: new Date().toISOString(), completedAt: null,
-    });
-    saveStore(arr);
+    if (!addTaskFromText(captureInput.value)) return;
     captureInput.value = "";
     renderAll();
   }
 });
+
+// ---------- Toast ----------
+let toastTimer = null;
+function showToast(msg) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 3500);
+}
+
+// ---------- Capture from anywhere: ?add= URL param + PWA share target ----------
+// planner.clickysteve.com/?add=dentist%20next%20tue%203pm  → parsed like the
+// capture bar. The Android share sheet (manifest share_target) arrives as
+// ?title=&text=&url= and is stitched into one capture string. Runs before
+// auth (tasks are local) and offline (SW serves the shell, query survives).
+function handleUrlCapture() {
+  let params;
+  try { params = new URLSearchParams(location.search); } catch { return; }
+  const hasCaptureParams = ["add", "title", "text", "url"].some(k => params.has(k));
+  if (!hasCaptureParams) return;
+
+  let rawText;
+  const add = params.get("add");
+  if (add) {
+    rawText = add;
+  } else {
+    // Web Share Target (GET): combine title / text / url, skipping duplicates
+    const title = (params.get("title") || "").trim();
+    const text = (params.get("text") || "").trim();
+    const url = (params.get("url") || "").trim();
+    const pieces = [];
+    if (title) pieces.push(title);
+    if (text && text !== title) pieces.push(text);
+    if (url && !text.includes(url) && !title.includes(url)) pieces.push(url);
+    rawText = pieces.join(" ");
+  }
+  rawText = (rawText || "").replace(/\s+/g, " ").trim();
+
+  // Strip the query either way so refresh/back can't re-capture
+  try { history.replaceState({}, "", location.pathname); } catch {}
+  if (!rawText) return;
+
+  // Dedupe guard: share sheets and shortcuts sometimes relaunch the URL
+  const parsedPreview = parseCapture(rawText);
+  const recentDup = loadStore().find(t =>
+    t.text === parsedPreview.text
+    && Date.now() - new Date(t.createdAt).getTime() < 60000);
+  if (recentDup) return;
+
+  const task = addTaskFromText(rawText);
+  if (!task) return;
+  const when = task.scheduledFor
+    ? ` · ${new Date(task.scheduledFor).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} ${fmtTime(task.scheduledFor)}`
+    : " · inbox";
+  showToast(`Captured: ${task.text}${when}`);
+}
 
 document.getElementById("copy-done").addEventListener("click", async () => {
   const items = getDoneItems(7, doneFilter);
@@ -4801,6 +4893,9 @@ function bootLocal() {
     });
   }
   wireGridListeners();
+
+  // Capture handed in via URL (?add= / share target) — before first render
+  handleUrlCapture();
 
   // Hydrate events from cache instantly (stale-while-revalidate)
   const cached = loadEventsFromCache();

@@ -2,7 +2,7 @@
 // App-shell cache so the planner opens offline. Google APIs are network-only
 // (cross-origin and the OAuth token is short-lived).
 
-const CACHE = "holding-pattern-v1";
+const CACHE = "holding-pattern-v2"; // v2: share_target manifest
 const SHELL = ["./", "./index.html", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", (event) => {
