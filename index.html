@@ -567,6 +567,11 @@
     outline: 2px solid #ef4444;
     outline-offset: -2px;
   }
+  .block:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    z-index: 5;
+  }
 
   /* Resize handles on task blocks */
   .block-resize {
@@ -764,6 +769,40 @@
   .pop-btn.success:hover { background: var(--done); }
   .pop-btn.danger { color: #ff9b8a; border-color: #4a2820; }
   .pop-btn.danger:hover { background: #2a1814; }
+
+  /* In-page modal dialog — native confirm()/alert() are blocked in sandboxed
+     iframes (Cowork), so we roll our own. */
+  .app-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .app-dialog {
+    background: var(--surface-2);
+    border: 1.5px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+    max-width: 420px;
+    width: 100%;
+  }
+  .app-dialog-msg {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-line;
+    margin-bottom: 14px;
+  }
+  .app-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
   .pop-dur-label {
     color: var(--text-muted);
     font-size: 11px;
@@ -1308,7 +1347,7 @@
       <input class="capture-input" id="capture" placeholder="throw it in… (try 'mix track tomorrow 8pm 1h #music')" autocomplete="off" />
     </div>
     <div class="capture-hint">
-      Hit Enter to capture. Try <code>today</code>, <code>tomorrow</code>, <code>fri</code>, <code>2pm</code>, <code>14:00</code>, <code>30m</code>, <code>1h</code>, <code>#work</code>.
+      Hit Enter to capture. Try <code>today</code>, <code>tomorrow</code>, <code>fri</code>, <code>next mon</code>, <code>12 jul</code>, <code>2pm</code>, <code>9.30pm</code>, <code>30m</code>, <code>1h</code>, <code>#work</code>.
     </div>
     <details class="inbox-disclosure" id="inbox-disclosure" open>
       <summary class="inbox-summary">
@@ -1492,6 +1531,11 @@
     "planner:gtoken:v1",
     "planner:events-cache:v1",
     "planner:last-modified",
+    // UI preferences: still included in the export payload, but flipping them
+    // shouldn't trigger a full Drive upload on their own.
+    "planner:inbox-open",
+    "planner:newMode",
+    "planner:lastEventCal",
   ]);
   let driveStateFileId = null;
   let syncDebounceTimer = null;
@@ -1585,8 +1629,24 @@
   function scheduleSync() {
     clearTimeout(syncDebounceTimer);
     setSyncStatus("Pending…", "pending");
-    syncDebounceTimer = setTimeout(syncToDrive, SYNC_DEBOUNCE_MS);
+    syncDebounceTimer = setTimeout(() => { syncDebounceTimer = null; syncToDrive(); }, SYNC_DEBOUNCE_MS);
   }
+
+  // If the tab hides or unloads while a debounced sync is pending, fire it
+  // immediately — otherwise the last edit before closing never reaches Drive
+  // and a stale device can clobber it later. Best-effort: the request may not
+  // complete on a hard close, but visibilitychange(hidden) fires on tab
+  // switches and most closes, which covers the common paths.
+  function flushPendingSync() {
+    if (!syncDebounceTimer) return;
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+    syncToDrive();
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPendingSync();
+  });
+  window.addEventListener("pagehide", flushPendingSync);
 
   function installLocalStorageHook() {
     localStorage.setItem = function (key, value) {
@@ -1614,22 +1674,30 @@
         return;
       }
       const remote = result.data;
-      const remoteTs = new Date(remote.exportedAt || result.modifiedTime).getTime();
-      const localStr = localStorage.getItem("planner:last-modified") || "1970-01-01T00:00:00Z";
-      const localTs = new Date(localStr).getTime();
-      if (remoteTs > localTs) {
-        suppressSyncDuringImport = true;
-        try {
-          window.plannerSync.import(remote);
-          origSetItem("planner:last-modified", remote.exportedAt || result.modifiedTime);
-        } finally { suppressSyncDuringImport = false; }
-        window.plannerSync.refresh();
-        setSyncStatus("Synced from cloud", "ok");
-      } else if (localTs > remoteTs) {
-        await syncToDrive();
+      let changedLocal = false;
+      let changedRemote = false;
+      suppressSyncDuringImport = true;
+      try {
+        if (typeof window.plannerSync.merge === "function") {
+          // Per-item merge: edits from both devices survive, deletions propagate
+          const r = window.plannerSync.merge(remote) || {};
+          changedLocal = !!r.changedLocal;
+          changedRemote = !!r.changedRemote;
+        } else {
+          // Fallback: whole-file last-write-wins
+          const remoteTs = new Date(remote.exportedAt || result.modifiedTime).getTime();
+          const localTs = new Date(localStorage.getItem("planner:last-modified") || "1970-01-01T00:00:00Z").getTime();
+          if (remoteTs > localTs) { window.plannerSync.import(remote); changedLocal = true; }
+          else if (localTs > remoteTs) changedRemote = true;
+        }
+        origSetItem("planner:last-modified", new Date().toISOString());
+      } finally { suppressSyncDuringImport = false; }
+      if (changedLocal) window.plannerSync.refresh();
+      if (changedRemote) {
+        await syncToDrive(); // push the reconciled state back up
       } else {
         const t = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        setSyncStatus("Synced " + t, "ok");
+        setSyncStatus(changedLocal ? "Synced from cloud" : "Synced " + t, "ok");
       }
     } catch (e) {
       console.warn("[planner] drive pull failed", e);
@@ -1808,8 +1876,8 @@ const CALS_KEY = "planner:cals:v1";
 const CAL_COLORS_KEY = "planner:cal-colors:v1";
 const LOGGED_EVENTS_KEY = "planner:logged-events:v1"; // { eventId: { summary, calName, completedAt, startIso, tag } }
 const EVENT_TAGS_KEY = "planner:event-tags:v1"; // { eventId: tagName }
-const EVENTS_CACHE_KEY = "planner:events-cache:v1"; // {events, fetchedAt, ids}
-const EVENTS_CACHE_TTL = 60 * 60 * 1000; // 1h — events still rendered from cache, but a fresh fetch always runs in background
+const DELETED_KEY = "planner:deleted:v1"; // { taskId: deletedAtIso } — tombstones for sync merge
+const EVENTS_CACHE_KEY = "planner:events-cache:v1"; // {events, fetchedAt, ids} — no TTL: cache renders instantly, a fresh fetch always runs in background
 const SLOT_HEIGHT = 16; // px per 15 min
 
 // Calendar color palette — wide range so multiple calendars stay distinguishable
@@ -1916,7 +1984,35 @@ function escapeHtml(s) {
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function loadStore() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; } }
-function saveStore(arr) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); } catch {} }
+function saveStoreRaw(arr) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); } catch {} }
+function loadTombstones() { try { return JSON.parse(localStorage.getItem(DELETED_KEY) || "{}"); } catch { return {}; } }
+function saveTombstones(o) { try { localStorage.setItem(DELETED_KEY, JSON.stringify(o)); } catch {} }
+function saveStore(arr) {
+  try {
+    // Per-task change tracking for cross-device sync merges:
+    // - bump updatedAt on any task whose content changed since last save
+    // - tombstone removed ids so deletions propagate instead of resurrecting
+    const prev = loadStore();
+    const now = new Date().toISOString();
+    const prevJson = new Map(prev.map(t => [t.id, JSON.stringify(t)]));
+    for (const t of arr) {
+      if (prevJson.get(t.id) !== JSON.stringify(t)) t.updatedAt = now;
+    }
+    const nextIds = new Set(arr.map(t => t.id));
+    const removed = prev.filter(t => !nextIds.has(t.id));
+    if (removed.length) {
+      const tomb = loadTombstones();
+      for (const t of removed) tomb[t.id] = now;
+      // Prune old tombstones so the map doesn't grow forever
+      const cutoff = Date.now() - 60 * 86400000;
+      for (const id of Object.keys(tomb)) {
+        if (new Date(tomb[id]).getTime() < cutoff) delete tomb[id];
+      }
+      saveTombstones(tomb);
+    }
+    saveStoreRaw(arr);
+  } catch {}
+}
 function loadState() { try { return JSON.parse(localStorage.getItem(STATE_KEY) || "{}"); } catch { return {}; } }
 function saveState(s) { try { localStorage.setItem(STATE_KEY, JSON.stringify(s)); } catch {} }
 function startOfDay(d = new Date()) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
@@ -1928,6 +2024,11 @@ function fmtTime(iso) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 function isSameDay(a, b) { return startOfDay(a).getTime() === startOfDay(b).getTime(); }
+function fmtDur(mins) {
+  mins = Math.max(0, Math.round(mins));
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h ? (m ? `${h}h${m}m` : `${h}h`) : `${m}m`;
+}
 function normMcp(raw) {
   if (raw == null) return null;
   if (raw && Array.isArray(raw.content)) {
@@ -1945,6 +2046,44 @@ function snapTo15(date) {
   d.setMinutes(Math.round(m / 15) * 15, 0, 0);
   return d;
 }
+
+// ---------- In-page dialogs ----------
+// Native confirm()/alert() silently no-op in sandboxed iframes (Cowork), so
+// all confirmation flows go through this promise-based modal instead.
+function appDialog(message, opts = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "app-dialog-overlay";
+    const showCancel = opts.cancel !== false;
+    wrap.innerHTML = `
+      <div class="app-dialog" role="alertdialog" aria-modal="true">
+        <div class="app-dialog-msg"></div>
+        <div class="app-dialog-actions">
+          ${showCancel ? `<button class="pop-btn" data-act="cancel">${escapeHtml(opts.cancelLabel || "Cancel")}</button>` : ""}
+          <button class="pop-btn ${opts.danger ? "danger" : "primary"}" data-act="ok">${escapeHtml(opts.okLabel || "OK")}</button>
+        </div>
+      </div>`;
+    wrap.querySelector(".app-dialog-msg").textContent = message;
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); done(false); }
+      if (e.key === "Enter") { e.stopPropagation(); e.preventDefault(); done(true); }
+    };
+    const done = (v) => {
+      document.removeEventListener("keydown", onKey, true);
+      wrap.remove();
+      resolve(v);
+    };
+    document.addEventListener("keydown", onKey, true);
+    wrap.addEventListener("pointerdown", (e) => { if (e.target === wrap) done(false); });
+    wrap.querySelector("[data-act='ok']").addEventListener("click", () => done(true));
+    const cancelBtn = wrap.querySelector("[data-act='cancel']");
+    if (cancelBtn) cancelBtn.addEventListener("click", () => done(false));
+    document.body.appendChild(wrap);
+    setTimeout(() => wrap.querySelector("[data-act='ok']").focus(), 0);
+  });
+}
+function appConfirm(message, opts) { return appDialog(message, opts || {}); }
+function appAlert(message) { return appDialog(message, { cancel: false }); }
 
 function toggleTaskDone(id) {
   const arr = loadStore();
@@ -1987,8 +2126,9 @@ function parseCapture(text) {
     remaining = (remaining.slice(0, durMatch.index) + remaining.slice(durMatch.index + durMatch[0].length)).trim();
   }
 
-  const timeMatch = remaining.match(/(?:^|\s)(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
-    || remaining.match(/(?:^|\s)(\d{1,2}):(\d{2})\b/);
+  // Times: "2pm", "9:30pm", "9.30pm", "14:00", "14.00"
+  const timeMatch = remaining.match(/(?:^|\s)(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i)
+    || remaining.match(/(?:^|\s)(\d{1,2})[:.](\d{2})\b/);
   if (timeMatch) {
     let h = parseInt(timeMatch[1], 10);
     const m = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
@@ -2014,14 +2154,45 @@ function parseCapture(text) {
       remaining = (remaining.slice(0, tomMatch.index) + remaining.slice(tomMatch.index + tomMatch[0].length)).trim();
     }
   }
+  // Explicit dates: "12 jul", "jul 12", "12th july" — next occurrence (this year
+  // if still ahead, otherwise next year).
+  if (!scheduledDay) {
+    const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+    const monthRe = MONTHS.join("|");
+    let m = remaining.match(new RegExp(`(?:^|\\s)(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthRe})[a-z]*\\b`, "i"));
+    let dayNum, monIdx;
+    if (m) {
+      dayNum = parseInt(m[1], 10);
+      monIdx = MONTHS.indexOf(m[2].toLowerCase());
+    } else {
+      m = remaining.match(new RegExp(`(?:^|\\s)(${monthRe})[a-z]*\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, "i"));
+      if (m) {
+        monIdx = MONTHS.indexOf(m[1].toLowerCase());
+        dayNum = parseInt(m[2], 10);
+      }
+    }
+    if (m && dayNum >= 1 && dayNum <= 31 && monIdx >= 0) {
+      const d = new Date(today);
+      d.setMonth(monIdx, dayNum);
+      d.setHours(0, 0, 0, 0);
+      if (d.getTime() < today.getTime()) d.setFullYear(d.getFullYear() + 1);
+      // Reject impossible dates (e.g. 31 feb rolls into march)
+      if (d.getDate() === dayNum && d.getMonth() === monIdx) {
+        scheduledDay = d;
+        remaining = (remaining.slice(0, m.index) + remaining.slice(m.index + m[0].length)).trim();
+      }
+    }
+  }
+  // Weekdays: "fri" = coming Friday, "next fri" = the Friday after that
   if (!scheduledDay) {
     for (let i = 0; i < 7; i++) {
-      const re = new RegExp(`(?:^|\\s)(${DAY_FULL[i]}|${DAY_NAMES[i]})\\b`, "i");
+      const re = new RegExp(`(?:^|\\s)(next\\s+)?(${DAY_FULL[i]}|${DAY_NAMES[i]})\\b`, "i");
       const m = remaining.match(re);
       if (m) {
         const todayDow = today.getDay();
         let delta = (i - todayDow + 7) % 7;
         if (delta === 0) delta = 7;
+        if (m[1]) delta += 7; // "next <day>" skips the coming occurrence
         scheduledDay = addDays(today, delta);
         remaining = (remaining.slice(0, m.index) + remaining.slice(m.index + m[0].length)).trim();
         break;
@@ -2247,9 +2418,11 @@ async function loadCalendar() {
     }
   }));
   calendarEvents = all;
+  lastCalendarFetchAt = Date.now();
   // Persist to cache for next-session instant render
   saveEventsToCache(all, ids);
 }
+let lastCalendarFetchAt = 0;
 
 function eventsForDay(date) {
   const dayStart = startOfDay(date).getTime();
@@ -2272,8 +2445,10 @@ function allDayEventsForDay(date) {
   });
 }
 
-function tasksForDay(date) {
-  const tasks = loadStore();
+function tasksForDay(date, tasks) {
+  // Callers that render several days pass the store in once instead of
+  // re-parsing localStorage per day.
+  if (!tasks) tasks = loadStore();
   const dayStart = startOfDay(date).getTime();
   const dayEnd = dayStart + 86400000;
   return tasks.filter(t => {
@@ -2308,10 +2483,11 @@ function renderPageMonth() {
 function renderDayTabs() {
   const el = document.getElementById("day-tabs");
   const today = startOfDay();
+  const allTasks = loadStore(); // parse once, not once per tab
   const tabs = [];
   for (let i = 0; i < 7; i++) {
     const d = addDays(today, i);
-    const dayTasks = tasksForDay(d).filter(t => t.status !== "done");
+    const dayTasks = tasksForDay(d, allTasks).filter(t => t.status !== "done");
     const isActive = i === state.activeDayOffset;
     const isSpecial = i === 0 || i === 1;
     const dayLabel = i === 0 ? "Today" : i === 1 ? "Tomorrow" : d.toLocaleDateString([], { weekday: "short" });
@@ -2373,6 +2549,7 @@ function renderInbox() {
         moved: false,
         pointerId: e.pointerId,
       };
+      attachInboxDragMove();
     });
     item.addEventListener("click", (e) => {
       if (inboxSuppressClick) return;
@@ -2453,7 +2630,7 @@ function onInboxPointerMove(e) {
       const dropTime = new Date(day);
       dropTime.setHours(0, 0, 0, 0);
       dropTime.setMinutes(dropMins);
-      paintGhost(dropTime, dragTask.estimatedMinutes || 30, false, ctx.dayCount > 1 ? ctx.days.indexOf(day) : 0, ctx.dayCount);
+      paintGhost(dropTime, dragTask.estimatedMinutes || 30, false);
     }
   } else {
     gridEl.classList.remove("drop-over");
@@ -2462,6 +2639,7 @@ function onInboxPointerMove(e) {
 }
 
 function onInboxPointerUp(e) {
+  detachInboxDragMove();
   if (!pendingInboxDrag) return;
   const p = pendingInboxDrag;
   pendingInboxDrag = null;
@@ -2525,7 +2703,10 @@ function onInboxPointerUp(e) {
   window.__inboxDragTask = null;
 }
 
-document.addEventListener("pointermove", onInboxPointerMove, { passive: false });
+// The non-passive pointermove handler is expensive (it blocks touch scroll
+// optimization), so it's only attached while a drag might be in progress.
+function attachInboxDragMove() { document.addEventListener("pointermove", onInboxPointerMove, { passive: false }); }
+function detachInboxDragMove() { document.removeEventListener("pointermove", onInboxPointerMove); }
 document.addEventListener("pointerup", onInboxPointerUp);
 document.addEventListener("pointercancel", onInboxPointerUp);
 
@@ -2543,24 +2724,28 @@ function scheduleTaskQuick(id) {
 }
 
 // ---------- Render: grid ----------
-function getDayBounds(date) {
-  // Determine grid extent: pad to fit any events outside default range
+function getDayBounds(date, allTasks) {
+  // Determine grid extent: pad to fit any events outside default range.
+  // Hours are computed relative to the day's midnight so events/tasks that
+  // end after midnight (e.g. 00:30 next day → hour 24.5) extend the grid
+  // instead of collapsing to a small next-day hour value.
   let startHour = DEFAULT_DAY_START_HOUR;
   let endHour = DEFAULT_DAY_END_HOUR;
+  const dayMs = startOfDay(date).getTime();
+  const hoursFromMidnight = (ms) => (ms - dayMs) / 3600000;
   const events = eventsForDay(date);
-  const tasks = tasksForDay(date);
+  const tasks = tasksForDay(date, allTasks);
   for (const ev of events) {
-    const s = new Date(ev.startIso);
-    const e = new Date(ev.endIso);
-    startHour = Math.min(startHour, s.getHours());
-    endHour = Math.max(endHour, Math.ceil(e.getHours() + e.getMinutes()/60));
+    const sH = hoursFromMidnight(new Date(ev.startIso).getTime());
+    const eH = hoursFromMidnight(new Date(ev.endIso).getTime());
+    startHour = Math.min(startHour, Math.floor(Math.max(0, sH)));
+    endHour = Math.max(endHour, Math.ceil(eH));
   }
   for (const tk of tasks) {
-    const s = new Date(tk.scheduledFor);
+    const sMs = new Date(tk.scheduledFor).getTime();
     const dur = tk.estimatedMinutes || 30;
-    const eMins = s.getHours() * 60 + s.getMinutes() + dur;
-    startHour = Math.min(startHour, s.getHours());
-    endHour = Math.max(endHour, Math.ceil(eMins / 60));
+    startHour = Math.min(startHour, Math.floor(Math.max(0, hoursFromMidnight(sMs))));
+    endHour = Math.max(endHour, Math.ceil(hoursFromMidnight(sMs + dur * 60000)));
   }
   return { startHour: Math.max(0, startHour), endHour: Math.min(28, endHour + 1) };
 }
@@ -2622,6 +2807,7 @@ function renderGrid() {
   const days = getActiveDays();
   const dayCount = days.length;
   const isMulti = dayCount > 1;
+  const allTasks = loadStore(); // parse once, shared by bounds + per-day rendering
 
   // Title — single day or range
   const first = days[0];
@@ -2715,7 +2901,7 @@ function renderGrid() {
   let startHour = DEFAULT_DAY_START_HOUR;
   let endHour = DEFAULT_DAY_END_HOUR;
   for (const d of days) {
-    const b = getDayBounds(d);
+    const b = getDayBounds(d, allTasks);
     startHour = Math.min(startHour, b.startHour);
     endHour = Math.max(endHour, b.endHour);
   }
@@ -2765,13 +2951,17 @@ function renderGrid() {
   }
 
   // Per-day rendering
-  let totalEvents = 0, totalTasks = 0;
+  let totalEvents = 0, totalTasks = 0, totalPlannedMins = 0;
   for (let dayIdx = 0; dayIdx < dayCount; dayIdx++) {
     const day = days[dayIdx];
     const events = eventsForDay(day);
-    const tasks = tasksForDay(day);
+    const tasks = tasksForDay(day, allTasks);
     totalEvents += events.length;
     totalTasks += tasks.length;
+    for (const ev of events) {
+      totalPlannedMins += Math.max(0, (new Date(ev.endIso) - new Date(ev.startIso)) / 60000);
+    }
+    for (const tk of tasks) totalPlannedMins += tk.estimatedMinutes || 30;
 
     const minsFromStart = (iso) => {
       const d = new Date(iso);
@@ -2809,7 +2999,7 @@ function renderGrid() {
       const evTagChip = evTag ? `<span class="block-tag">${escapeHtml(evTag)}</span>` : "";
       const calChip = ev.calName ? `<span class="block-cal">${escapeHtml(ev.calName)}</span>` : "";
       const metaHtml = (evTagChip || calChip) ? `<div class="block-meta">${evTagChip}${calChip}</div>` : "";
-      html += `<div class="block event ${logged ? "logged" : ""} ${overlapClass} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" data-day-idx="${dayIdx}" style="top:${top}px;height:${height}px;${styleBg}${colStyle}" title="${escapeHtml(tooltip)}">
+      html += `<div class="block event ${logged ? "logged" : ""} ${overlapClass} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-event-id="${escapeHtml(ev.id)}" data-day-idx="${dayIdx}" style="top:${top}px;height:${height}px;${styleBg}${colStyle}" title="${escapeHtml(tooltip)}" role="button" tabindex="0" aria-label="${escapeHtml(tooltip)}">
         <div class="block-check ${logged ? "checked" : ""}" data-action="toggle-event-log" title="${logged ? "Unlog" : "Log for bi-weekly"}"></div>
         ${showTime ? `<div class="block-time" style="position:relative;z-index:1;">${escapeHtml(tStr)}</div>` : ""}
         <div class="block-title" style="position:relative;z-index:1;">${escapeHtml(ev.summary)}</div>
@@ -2831,15 +3021,16 @@ function renderGrid() {
       const short = dur < 30;
       const showTime = dur >= 30;
       const isDone = tk.status === "done";
-      const overdue = false;
       const startMs = new Date(tk.scheduledFor).getTime();
       const endMs = startMs + dur * 60000;
+      const overdue = !isDone && endMs < Date.now();
       const tStr = `${fmtTime(tk.scheduledFor)}–${fmtTime(new Date(endMs).toISOString())}`;
       const customBg = tagBg(tk.tag);
       const styleBg = customBg ? `background:${customBg};` : "";
       const tagChip = tk.tag ? `<span class="block-tag">${escapeHtml(tk.tag)}</span>` : "";
       const metaHtml = tagChip ? `<div class="block-meta">${tagChip}</div>` : "";
-      html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${overlapClass} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-day-idx="${dayIdx}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}${colStyle}">
+      const taskAria = `${tk.text}, ${tStr}${tk.tag ? ", #" + tk.tag : ""}${isDone ? ", done" : overdue ? ", overdue" : ""}`;
+      html += `<div class="block task ${isDone ? "done" : ""} ${overdue ? "overdue" : ""} ${overlapClass} ${tall ? "tall" : ""} ${medium ? "medium" : ""} ${short ? "short" : ""}" data-id="${tk.id}" data-day-idx="${dayIdx}" data-action="open-task" style="top:${top}px;height:${height}px;${styleBg}${colStyle}" role="button" tabindex="0" aria-label="${escapeHtml(taskAria)}">
         <div class="block-resize" data-resize="top"></div>
         <div class="block-check" data-action="toggle-done" title="${isDone ? "Mark not done" : "Mark done"}"></div>
         ${showTime ? `<div class="block-time">${escapeHtml(tStr)}</div>` : ""}
@@ -2851,7 +3042,9 @@ function renderGrid() {
   }
 
   gridEl.innerHTML = html;
-  document.getElementById("day-meta").textContent = `${totalTasks} task${totalTasks === 1 ? "" : "s"} · ${totalEvents} event${totalEvents === 1 ? "" : "s"}`;
+  document.getElementById("day-meta").textContent =
+    `${totalTasks} task${totalTasks === 1 ? "" : "s"} · ${totalEvents} event${totalEvents === 1 ? "" : "s"}`
+    + (totalPlannedMins ? ` · ${fmtDur(totalPlannedMins)} planned` : "");
 
   // Wire event-block log checkboxes + click-to-edit
   gridEl.querySelectorAll(".block.event").forEach(b => {
@@ -2877,6 +3070,12 @@ function renderGrid() {
       if (!ev) return;
       openEventPopover(b, ev);
     });
+    b.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      const ev = calendarEvents.find(x => x.id === b.dataset.eventId);
+      if (ev) openEventPopover(b, ev);
+    });
   });
   // Wire per-block handlers (recreated each render — fine, the elements are new)
   gridEl.querySelectorAll(".block.task").forEach(b => {
@@ -2888,6 +3087,11 @@ function renderGrid() {
         return;
       }
       if (e.target.closest("[data-resize]")) return; // resize handles handle their own
+      openTaskPopover(b, b.dataset.id);
+    });
+    b.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
       openTaskPopover(b, b.dataset.id);
     });
     b.addEventListener("pointerdown", (e) => {
@@ -2938,6 +3142,7 @@ function startBlockDrag(e, block, kind) {
     startY: e.clientY,
     moved: false,
   };
+  attachBlockDragMove();
 }
 
 function onBlockMouseMove(e) {
@@ -3045,6 +3250,7 @@ function onBlockMouseMove(e) {
 }
 
 function onBlockMouseUp(e) {
+  detachBlockDragMove();
   if (!pendingDrag) return;
   const p = pendingDrag;
   pendingDrag = null;
@@ -3115,7 +3321,9 @@ function onBlockMouseUp(e) {
   renderAll();
 }
 
-document.addEventListener("pointermove", onBlockMouseMove, { passive: false });
+// As with inbox drags: only listen for pointermove during an active drag.
+function attachBlockDragMove() { document.addEventListener("pointermove", onBlockMouseMove, { passive: false }); }
+function detachBlockDragMove() { document.removeEventListener("pointermove", onBlockMouseMove); }
 document.addEventListener("pointerup", onBlockMouseUp);
 document.addEventListener("pointercancel", onBlockMouseUp);
 
@@ -3265,6 +3473,8 @@ function closePopover() {
   document.removeEventListener("pointerdown", onDocClick);
 }
 function onDocClick(e) {
+  // Clicks inside an app dialog shouldn't dismiss the popover underneath it
+  if (e.target.closest && e.target.closest(".app-dialog-overlay")) return;
   if (activePopover && !activePopover.contains(e.target)) closePopover();
 }
 
@@ -4037,7 +4247,11 @@ function openEventPopover(blockEl, ev) {
 
   // Delete
   pop.querySelector("#ev-del").addEventListener("click", async () => {
-    if (!confirm(`Delete "${ev.summary}" from ${ev.calName || "your calendar"}? This deletes it from Google Calendar too.`)) return;
+    const ok = await appConfirm(
+      `Delete "${ev.summary}" from ${ev.calName || "your calendar"}?\n\nThis deletes it from Google Calendar too.`,
+      { okLabel: "Delete", danger: true }
+    );
+    if (!ok) return;
     setStatus("Deleting…");
     try {
       const params = { eventId: ev.id };
@@ -4417,6 +4631,7 @@ function exportAllData() {
     version: 2,
     exportedAt: new Date().toISOString(),
     tasks: loadStore(),
+    deletedTasks: loadTombstones(),
     state: loadState(),
     tags: loadTags(),
     eventTags: loadEventTags(),
@@ -4434,7 +4649,8 @@ function exportAllData() {
 function importAllData(data) {
   if (!data || typeof data !== "object") throw new Error("Not a valid backup file.");
   if (!Array.isArray(data.tasks)) throw new Error("Backup is missing tasks list.");
-  saveStore(data.tasks);
+  saveStoreRaw(data.tasks); // replace-all: don't bump updatedAt or tombstone the diff
+  if (data.deletedTasks && typeof data.deletedTasks === "object") saveTombstones(data.deletedTasks);
   if (data.state) saveState(data.state);
   if (data.tags && typeof data.tags === "object") saveTags(data.tags);
   if (data.eventTags && typeof data.eventTags === "object") saveEventTags(data.eventTags);
@@ -4455,10 +4671,82 @@ function importAllData(data) {
   return true;
 }
 
+// ---------- Sync merge (per-task, newest wins) ----------
+// Reconciles a remote Drive snapshot with local state instead of whole-file
+// last-write-wins, so edits made on two devices both survive.
+// Tasks merge per-id by updatedAt; tombstones make deletions propagate.
+// Keyed maps (tags, event tags, logged events, cal colors) union with the
+// newer side winning conflicts. Singleton prefs take the newer side wholesale.
+function mergeRemoteData(remote) {
+  const noop = { changedLocal: false, changedRemote: false };
+  if (!remote || typeof remote !== "object" || !Array.isArray(remote.tasks)) return noop;
+
+  const forCompare = (d) => { const c = { ...d }; delete c.exportedAt; return JSON.stringify(c); };
+  const beforeLocal = forCompare(exportAllData());
+  const remoteSnapshot = forCompare(remote);
+
+  // Tombstones: union, newest wins
+  const tomb = loadTombstones();
+  const remoteTomb = (remote.deletedTasks && typeof remote.deletedTasks === "object") ? remote.deletedTasks : {};
+  for (const [id, iso] of Object.entries(remoteTomb)) {
+    if (!tomb[id] || new Date(iso) > new Date(tomb[id])) tomb[id] = iso;
+  }
+
+  // Tasks: union by id, newest updatedAt wins, tombstoned-after-last-edit drops
+  const taskTs = (t) => new Date(t.updatedAt || t.completedAt || t.createdAt || 0).getTime();
+  const byId = new Map(loadStore().map(t => [t.id, t]));
+  for (const rt of remote.tasks) {
+    if (!rt || !rt.id) continue;
+    const lt = byId.get(rt.id);
+    if (!lt || taskTs(rt) > taskTs(lt)) byId.set(rt.id, rt);
+  }
+  const mergedTasks = [...byId.values()].filter(t => {
+    const d = tomb[t.id];
+    return !(d && new Date(d).getTime() >= taskTs(t));
+  });
+
+  // Which side is newer overall? Decides conflicts for the keyed maps and prefs.
+  const remoteTs = new Date(remote.exportedAt || 0).getTime();
+  const localTs = new Date(localStorage.getItem("planner:last-modified") || 0).getTime();
+  const remoteNewer = remoteTs > localTs;
+  const mergeMap = (localObj, remoteObj) => {
+    const r = (remoteObj && typeof remoteObj === "object") ? remoteObj : {};
+    return remoteNewer ? { ...localObj, ...r } : { ...r, ...localObj };
+  };
+
+  saveStoreRaw(mergedTasks);
+  saveTombstones(tomb);
+  saveTags(mergeMap(loadTags(), remote.tags));
+  saveEventTags(mergeMap(loadEventTags(), remote.eventTags));
+  saveLoggedEvents(mergeMap(loadLoggedEvents(), remote.loggedEvents));
+  try { localStorage.setItem(CAL_COLORS_KEY, JSON.stringify(mergeMap(loadCalColorOverrides(), remote.calColorOverrides))); } catch {}
+  if (remoteNewer) {
+    if (remote.state) saveState(remote.state);
+    if (Array.isArray(remote.selectedCalendars)) {
+      try { localStorage.setItem(CALS_KEY, JSON.stringify(remote.selectedCalendars)); } catch {}
+    } else if (remote.selectedCalendars === null) {
+      try { localStorage.removeItem(CALS_KEY); } catch {}
+    }
+    if (remote.uiState && typeof remote.uiState === "object") {
+      if (typeof remote.uiState.inboxOpen === "string") localStorage.setItem("planner:inbox-open", remote.uiState.inboxOpen);
+      if (typeof remote.uiState.lastEventCal === "string") localStorage.setItem("planner:lastEventCal", remote.uiState.lastEventCal);
+      if (typeof remote.uiState.newMode === "string") localStorage.setItem("planner:newMode", remote.uiState.newMode);
+    }
+    state = Object.assign({ activeDayOffset: 0, viewMode: "day", multiDays: 3 }, loadState());
+  }
+
+  const after = forCompare(exportAllData());
+  return {
+    changedLocal: after !== beforeLocal,
+    changedRemote: after !== remoteSnapshot,
+  };
+}
+
 // Expose the data shuttle for the OAuth bootstrap's Drive sync layer
 window.plannerSync = {
   export: exportAllData,
   import: importAllData,
+  merge: mergeRemoteData,
   refresh: () => { reapplyCalOverrides(); renderAll(); },
 };
 
@@ -4485,20 +4773,24 @@ document.getElementById("restore-input").addEventListener("change", async (e) =>
     const taskCount = Array.isArray(data.tasks) ? data.tasks.length : 0;
     const tagCount = data.tags ? Object.keys(data.tags).length : 0;
     const calColors = data.calColorOverrides ? Object.keys(data.calColorOverrides).length : 0;
-    if (!confirm(`Restore from backup?\n\n${taskCount} tasks · ${tagCount} tags · ${calColors} calendar color overrides\n\nThis replaces your current data.`)) return;
+    const ok = await appConfirm(
+      `Restore from backup?\n\n${taskCount} tasks · ${tagCount} tags · ${calColors} calendar color overrides\n\nThis replaces your current data.`,
+      { okLabel: "Restore" }
+    );
+    if (!ok) return;
     importAllData(data);
     reapplyCalOverrides();
     renderAll();
   } catch (err) {
-    alert("Restore failed: " + err.message);
+    await appAlert("Restore failed: " + err.message);
   }
   e.target.value = "";
 });
 
-async function boot() {
-  if (!window.cowork || typeof window.cowork.callMcpTool !== "function") {
-    setTimeout(boot, 100); return;
-  }
+// Local-first boot: tasks live in localStorage, so the UI renders immediately.
+// Calendar features hydrate separately once window.cowork (Cowork adapter or
+// OAuth adapter) becomes available — previously the whole app blanked on auth.
+function bootLocal() {
   // Inbox disclosure: restore + persist
   const inboxDisc = document.getElementById("inbox-disclosure");
   if (inboxDisc) {
@@ -4508,17 +4800,9 @@ async function boot() {
       localStorage.setItem("planner:inbox-open", inboxDisc.open ? "1" : "0");
     });
   }
-  // Show "Sign out" button only when running standalone (OAuth mode)
-  if (typeof window.__signOutOAuth === "function") {
-    const so = document.getElementById("signout-btn");
-    if (so) {
-      so.style.display = "";
-      so.addEventListener("click", () => window.__signOutOAuth());
-    }
-  }
   wireGridListeners();
 
-  // 1) Hydrate from cache instantly (stale-while-revalidate)
+  // Hydrate events from cache instantly (stale-while-revalidate)
   const cached = loadEventsFromCache();
   if (cached && cached.events) {
     calendarEvents = cached.events;
@@ -4532,8 +4816,24 @@ async function boot() {
       if (now) now.scrollIntoView({ block: "center", behavior: "instant" });
     }, 50);
   }
+}
 
-  // 2) Fetch fresh in the background and re-render once it arrives
+let calendarBooted = false;
+async function bootCalendar() {
+  if (!window.cowork || typeof window.cowork.callMcpTool !== "function") {
+    setTimeout(bootCalendar, 100); return;
+  }
+  if (calendarBooted) return;
+  calendarBooted = true;
+  // Show "Sign out" button only when running standalone (OAuth mode)
+  if (typeof window.__signOutOAuth === "function") {
+    const so = document.getElementById("signout-btn");
+    if (so) {
+      so.style.display = "";
+      so.addEventListener("click", () => window.__signOutOAuth());
+    }
+  }
+  // Fetch fresh in the background and re-render once it arrives
   setSyncing(true);
   try {
     await loadCalendarList();
@@ -4548,6 +4848,39 @@ async function boot() {
   renderDayTabs();
 }
 
+// ---------- Freshness: now-line tick, midnight rollover, refetch on return ----------
+const CALENDAR_REFETCH_MIN_MS = 5 * 60 * 1000;
+let _lastRenderedDayMs = startOfDay().getTime();
+
+function interactionInProgress() {
+  // Don't re-render under the user's pointer or an open editor
+  return !!(activePopover || (pendingDrag && pendingDrag.moved) || (pendingInboxDrag && pendingInboxDrag.moved));
+}
+
+function freshnessTick() {
+  if (interactionInProgress()) return;
+  const todayMs = startOfDay().getTime();
+  if (todayMs !== _lastRenderedDayMs) {
+    // Crossed midnight — "Today" moved, so everything needs re-deriving
+    _lastRenderedDayMs = todayMs;
+    renderAll();
+  } else {
+    // Just advance the now-line
+    renderGrid();
+  }
+}
+setInterval(freshnessTick, 60 * 1000);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  freshnessTick();
+  // Refetch calendar data if it's gone stale while the tab was hidden
+  if (window.cowork && typeof window.cowork.callMcpTool === "function"
+      && Date.now() - lastCalendarFetchAt > CALENDAR_REFETCH_MIN_MS) {
+    refreshCalendarAndRender();
+  }
+});
+
 function setSyncing(on) {
   const meta = document.getElementById("day-meta");
   if (!meta) return;
@@ -4555,7 +4888,8 @@ function setSyncing(on) {
   if (on) meta.textContent = (meta.textContent || "") + " · syncing…";
   // The next renderGrid will overwrite this with the canonical text
 }
-boot();
+bootLocal();
+bootCalendar();
 </script>
 </body>
 </html>
