@@ -2044,7 +2044,9 @@ function fmtTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  // hourCycle h23 (not hour12:false) — the latter can yield "24:00" for
+  // midnight in some locales, which <input type="time"> rejects as invalid
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 }
 function isSameDay(a, b) { return startOfDay(a).getTime() === startOfDay(b).getTime(); }
 function fmtDur(mins) {
@@ -3754,14 +3756,16 @@ function openNewTaskPopover(x, y, atTime) {
     pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === dur));
     const numEl = pop.querySelector("#np-dur-num");
     if (numEl && document.activeElement !== numEl) numEl.value = dur;
-    // Sync end time input
+    // Sync end time input — but never while the user is typing in it,
+    // otherwise we overwrite their half-entered value on every keystroke
+    const endEl = pop.querySelector("#np-end");
     const startTime = pop.querySelector("#np-time").value;
-    if (startTime) {
+    if (endEl && document.activeElement !== endEl && startTime) {
       const [h, m] = startTime.split(":").map(Number);
       const endMins = h * 60 + m + dur;
       const eh = Math.floor(endMins / 60) % 24;
       const em = endMins % 60;
-      pop.querySelector("#np-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
+      endEl.value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
     }
   }
   // Direct duration number input on the new-task popover
@@ -3935,14 +3939,16 @@ function openTaskPopover(blockEl, id) {
     pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === newDur));
     const numEl = pop.querySelector("#ep-dur-num");
     if (numEl && document.activeElement !== numEl) numEl.value = newDur;
-    // Sync end time input
+    // Sync end time input — but never while the user is typing in it,
+    // otherwise we overwrite their half-entered value on every keystroke
+    const endEl = pop.querySelector("#ep-end");
     const startTime = pop.querySelector("#ep-time").value;
-    if (startTime) {
+    if (endEl && document.activeElement !== endEl && startTime) {
       const [h, m] = startTime.split(":").map(Number);
       const endMins = h * 60 + m + newDur;
       const eh = Math.floor(endMins / 60) % 24;
       const em = endMins % 60;
-      pop.querySelector("#ep-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
+      endEl.value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
     }
   }
   // Direct duration number input
@@ -4211,13 +4217,15 @@ function openEventPopover(blockEl, ev) {
     pop.querySelectorAll(".dur-pick button").forEach(x => x.classList.toggle("active", parseInt(x.dataset.dur,10) === pendingDur));
     const numEl = pop.querySelector("#ev-dur-num");
     if (numEl && document.activeElement !== numEl) numEl.value = pendingDur;
+    // Never overwrite the end input while the user is typing in it
+    const endEl = pop.querySelector("#ev-end");
     const startTime = pop.querySelector("#ev-time").value;
-    if (startTime) {
+    if (endEl && document.activeElement !== endEl && startTime) {
       const [h, m] = startTime.split(":").map(Number);
       const endMins = h * 60 + m + pendingDur;
       const eh = Math.floor(endMins / 60) % 24;
       const em = endMins % 60;
-      pop.querySelector("#ev-end").value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
+      endEl.value = `${String(eh).padStart(2,"0")}:${String(em).padStart(2,"0")}`;
     }
   }
   // Direct duration number input
